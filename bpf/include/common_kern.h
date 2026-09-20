@@ -16,56 +16,56 @@ int check_l4_bound(int hdr_type, void* l4hdr, void* data_end) {
 }
 
 static __always_inline
-int parse_5tuple_in(struct iphdr * iph, void *data_end, struct fivetuple* tuple) {
+int parse_5tuple_in(struct iphdr * iph, void *data_end, struct oncache_flow_v1* tuple) {
     int proto = iph->protocol;
 
     if (check_l4_bound(proto, iph + 1, data_end)) return 1;
 
-    tuple->raddr = iph->saddr;
-    tuple->laddr = iph->daddr;
+    tuple->remote_addr = iph->saddr;
+    tuple->local_addr = iph->daddr;
     tuple->protocol = iph->protocol;
     if (proto == IPPROTO_TCP) {
         struct tcphdr *tcphdr = (struct tcphdr *)(iph + 1);
-        tuple->rport = tcphdr->source;
-        tuple->lport = tcphdr->dest;
+        tuple->remote_port = tcphdr->source;
+        tuple->local_port = tcphdr->dest;
     } else if (proto == IPPROTO_UDP) {
         struct udphdr *udphdr = (struct udphdr *)(iph + 1);
-        tuple->rport = udphdr->source;
-        tuple->lport = udphdr->dest;
+        tuple->remote_port = udphdr->source;
+        tuple->local_port = udphdr->dest;
     } else {
-        tuple->rport = 0;
-        tuple->lport = 0;
+        tuple->remote_port = 0;
+        tuple->local_port = 0;
     }
     return 0;
 }
 
 static __always_inline
-int parse_5tuple_e(struct iphdr * iph, void *data_end, struct fivetuple* tuple) {
+int parse_5tuple_e(struct iphdr * iph, void *data_end, struct oncache_flow_v1* tuple) {
     int proto = iph->protocol;
 
     if (check_l4_bound(proto, iph + 1, data_end)) return 1;
 
-    tuple->laddr = iph->saddr;
-    tuple->raddr = iph->daddr;
+    tuple->local_addr = iph->saddr;
+    tuple->remote_addr = iph->daddr;
     tuple->protocol = iph->protocol;
     if (proto == IPPROTO_TCP) {
         struct tcphdr *tcphdr = (struct tcphdr *)(iph + 1);
-        tuple->lport = tcphdr->source;
-        tuple->rport = tcphdr->dest;
+        tuple->local_port = tcphdr->source;
+        tuple->remote_port = tcphdr->dest;
     } else if (proto == IPPROTO_UDP) {
         struct udphdr *udphdr = (struct udphdr *)(iph + 1);
-        tuple->lport = udphdr->source;
-        tuple->rport = udphdr->dest;
+        tuple->local_port = udphdr->source;
+        tuple->remote_port = udphdr->dest;
     } else {
-        tuple->lport = 0;
-        tuple->rport = 0;
+        tuple->local_port = 0;
+        tuple->remote_port = 0;
     }
     return 0;
 }
 
-static __always_inline void initegressinfo(struct egressinfo* ci, const void * data, int ifidx) {
+static __always_inline void initegressinfo(struct oncache_egress_v1* ci, const void * data, int ifindex) {
     __builtin_memcpy(&(ci->outer_header), data, 64);
-    ci->ifidx = ifidx;
+    ci->ifindex = ifindex;
 }
 
 unsigned long long load_byte(void *skb,

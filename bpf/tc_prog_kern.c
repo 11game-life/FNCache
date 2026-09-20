@@ -8,7 +8,7 @@
 struct bpf_elf_map SEC("maps") ingress_cache = {
     .type = BPF_MAP_TYPE_LRU_HASH,
     .size_key = sizeof(__be32),
-    .size_value = sizeof(struct ingressinfo),
+    .size_value = sizeof(struct oncache_ingress_v1),
     .pinning    = PIN_GLOBAL_NS,
     .max_elem = 1024,
 };
@@ -24,23 +24,23 @@ struct bpf_elf_map SEC("maps") egressip_cache = {
 struct bpf_elf_map SEC("maps") egress_cache = {
     .type = BPF_MAP_TYPE_LRU_HASH,
     .size_key = sizeof(__be32),
-    .size_value = sizeof(struct egressinfo),
+    .size_value = sizeof(struct oncache_egress_v1),
     .pinning    = PIN_GLOBAL_NS,
     .max_elem = 1024,
 };
 
 struct bpf_elf_map SEC("maps") policy_cache = {
     .type = BPF_MAP_TYPE_LRU_HASH,
-    .size_key = sizeof(struct fivetuple),
-    .size_value = sizeof(struct action),
+    .size_key = sizeof(struct oncache_flow_v1),
+    .size_value = sizeof(struct oncache_action_v1),
     .pinning    = PIN_GLOBAL_NS,
     .max_elem = 4096,
 };
 
 struct bpf_elf_map SEC("maps") devmap = {
     .type = BPF_MAP_TYPE_LRU_HASH,
-    .size_key = sizeof(int),
-    .size_value = sizeof(struct devinfo),
+    .size_key = sizeof(__u32),
+    .size_value = sizeof(struct oncache_device_v1),
     .pinning    = PIN_GLOBAL_NS,
     .max_elem = 8,
 };
@@ -73,27 +73,27 @@ int tc_init_e_func(struct __sk_buff *skb) {
     if ((inner_iph->tos & 0xc) != 0xc) goto out;
     /////////////////////////// Policy Learning ///////////////////////////
 #ifdef ENABLENP
-    struct fivetuple tuple_;
+    struct oncache_flow_v1 tuple_;
     if (parse_5tuple_e(inner_iph, data_end, &tuple_)) goto out;
-    struct action eaction_ = {
-        .egress = 1,
-        .ingress = 0
+    struct oncache_action_v1 eaction_ = {
+        .egress_ready = 1,
+        .ingress_ready = 0
     };
     if(bpf_map_update_elem(&policy_cache, &tuple_, &eaction_, BPF_NOEXIST)) {
-        struct action* action_ = bpf_map_lookup_elem(&policy_cache, &tuple_);
+        struct oncache_action_v1* action_ = bpf_map_lookup_elem(&policy_cache, &tuple_);
         if (!action_) {
             bpf_printkm("(tc_init_e)ERROR: Can not lookup policy_cache. goto out");
         } else {
-            action_->egress = 1;
-            // bpf_printkm("(tc_init_e)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.laddr, tuple_.raddr);
+            action_->egress_ready = 1;
+            // bpf_printkm("(tc_init_e)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
         }
     // } else {
-        // bpf_printkm("(tc_init_e)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.laddr, tuple_.raddr);
+        // bpf_printkm("(tc_init_e)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
     }
 #endif
     ///////////////////////// Header cache learning ///////////////////////////////
     // Make sure there is elem in the map
-    struct egressinfo tmpnodeegressinfo_;
+    struct oncache_egress_v1 tmpnodeegressinfo_;
     initegressinfo(&tmpnodeegressinfo_, data, skb->ifindex);
     err = bpf_map_update_elem(&egress_cache, &outer_iph->daddr, &tmpnodeegressinfo_, BPF_NOEXIST);
     // if(!err) {
@@ -125,12 +125,12 @@ int tc_masq_func(struct __sk_buff *ctx) {
     __u32 hash = bpf_get_hash_recalc(ctx);
 #ifdef ENABLENP
     ///////////////////////// Check for Policy /////////////////////////
-    struct fivetuple tuple_;
+    struct oncache_flow_v1 tuple_;
     if (parse_5tuple_e(iphdr, data_end, &tuple_)) goto out;
-    struct action *action_ = bpf_map_lookup_elem(&policy_cache, &tuple_);
+    struct oncache_action_v1 *action_ = bpf_map_lookup_elem(&policy_cache, &tuple_);
     // Must the ingress and egress both allow the flow, or will cause conntrack problem
-    if (!action_ || !(action_->ingress & action_->egress)) {
-        // bpf_printkm("(tc_masq)INFO: Cannot masq because of policy. tuple_ is %x %x", tuple_.laddr, tuple_.raddr);
+    if (!action_ || !(action_->ingress_ready & action_->egress_ready)) {
+        // bpf_printkm("(tc_masq)INFO: Cannot masq because of policy. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
         set_ip_tos(ctx, 0, 0x4);
         goto out;
     }
@@ -144,7 +144,7 @@ int tc_masq_func(struct __sk_buff *ctx) {
     } 
 
     // Use the nodeip to look up the egressinfo for masq
-    struct egressinfo* egressinfo_ = bpf_map_lookup_elem(&egress_cache, nodeip_);
+    struct oncache_egress_v1* egressinfo_ = bpf_map_lookup_elem(&egress_cache, nodeip_);
     if (!egressinfo_) {
         bpf_printkm("(tc_masq)WARNING: Can not find egressinfo. nodedip is %x", &nodeip_);
         set_ip_tos(ctx, 0, 0x4);
@@ -152,8 +152,8 @@ int tc_masq_func(struct __sk_buff *ctx) {
     }
 
     // Check for restore cache
-    struct ingressinfo* ingressinfo_ = bpf_map_lookup_elem(&ingress_cache, &iphdr->saddr);
-    if (!ingressinfo_ || ingressinfo_->smac[0] == 0x0) {
+    struct oncache_ingress_v1* ingressinfo_ = bpf_map_lookup_elem(&ingress_cache, &iphdr->saddr);
+    if (!ingressinfo_ || ingressinfo_->src_mac[0] == 0x0) {
         bpf_printkm("(tc_masq)WARNING: Not ready for restore. LocalIP is %x", iphdr->saddr);
         goto out;
     }
@@ -178,8 +178,8 @@ int tc_masq_func(struct __sk_buff *ctx) {
     bpf_skb_store_bytes(ctx, UDP_PORT_OFF, &sport, sizeof(sport), 0);
 
     ///////////////////////// Redirect to Node NIC /////////////////////////
-    // action = bpf_redirect_rpeer(egressinfo_->ifidx, 0);
-    action = bpf_redirect(egressinfo_->ifidx, 0);
+    // action = bpf_redirect_rpeer(egressinfo_->ifindex, 0);
+    action = bpf_redirect(egressinfo_->ifindex, 0);
     goto out;
 out:
     return action;
@@ -212,29 +212,29 @@ int tc_restore_func(struct __sk_buff *ctx) {
     struct iphdr *inner_iph = (struct iphdr *)(inner_eth + 1);
     
     int ifindex = ctx->ifindex;
-    struct devinfo *devinfo_ = bpf_map_lookup_elem(&devmap, &ifindex);
+    struct oncache_device_v1 *devinfo_ = bpf_map_lookup_elem(&devmap, &ifindex);
     if (!devinfo_ || maccmp(outer_eth->h_dest, devinfo_->mac, ETH_ALEN)) {
         bpf_printkm("(tc_restore)ERROR: Can not find devinfo or mac wrong.");
         goto out;
     }
-    if (!devinfo_ || outer_iph->daddr != devinfo_->ip) {
+    if (!devinfo_ || outer_iph->daddr != devinfo_->ipv4) {
         bpf_printkm("(tc_restore)ERROR: IP wrong.");
         goto out;
     }
     ///////////////////////// Policy Checking /////////////////////////
 #ifdef ENABLENP
-    struct fivetuple tuple_;
+    struct oncache_flow_v1 tuple_;
     if (parse_5tuple_in(inner_iph, data_end, &tuple_)) goto out;
-    struct action *action_ = bpf_map_lookup_elem(&policy_cache, &tuple_);
-    if (!action_ || !(action_->ingress & action_->egress)) {
-        // bpf_printkm("(tc_restore)INFO: Cannot restore because of policy. tuple_ is %x %x", tuple_.laddr, tuple_.raddr);
+    struct oncache_action_v1 *action_ = bpf_map_lookup_elem(&policy_cache, &tuple_);
+    if (!action_ || !(action_->ingress_ready & action_->egress_ready)) {
+        // bpf_printkm("(tc_restore)INFO: Cannot restore because of policy. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
         set_ip_tos(ctx, 50, 0x4);
         goto out;
     }
 #endif
     ///////////////////////// Restore the Packet /////////////////////////
-    struct ingressinfo* ingressinfo_ = bpf_map_lookup_elem(&ingress_cache, &inner_iph->daddr);
-    if (!ingressinfo_ || ingressinfo_->smac[0] == 0x0) {
+    struct oncache_ingress_v1* ingressinfo_ = bpf_map_lookup_elem(&ingress_cache, &inner_iph->daddr);
+    if (!ingressinfo_ || ingressinfo_->src_mac[0] == 0x0) {
         bpf_printkm("(tc_restore)ERROR: pod info not ready, LocalIP is %x", inner_iph->daddr);
         set_ip_tos(ctx, 50, 0x4);
         goto out;
@@ -254,9 +254,9 @@ int tc_restore_func(struct __sk_buff *ctx) {
     if (data_end < data + MACLEN + IPLEN) goto out;
     // Change MAC to masqed MAC
     outer_eth = data;
-    __builtin_memcpy(outer_eth->h_dest, ingressinfo_->dmac, ETH_ALEN);
-    __builtin_memcpy(outer_eth->h_source, ingressinfo_->smac, ETH_ALEN);
-    action = bpf_redirect_peer(ingressinfo_->ifidx, 0);
+    __builtin_memcpy(outer_eth->h_dest, ingressinfo_->dst_mac, ETH_ALEN);
+    __builtin_memcpy(outer_eth->h_source, ingressinfo_->src_mac, ETH_ALEN);
+    action = bpf_redirect_peer(ingressinfo_->ifindex, 0);
 out:
     return action;
 }
@@ -275,34 +275,34 @@ int tc_init_in_func(struct __sk_buff *ctx) {
 
     // We only learn the flow that is marked as 0x4
     if ((iphdr->tos & 0xc) != 0xc) goto out;
-    ///////////////////////// Header/ifidx Learning ////////////////////
-    struct ingressinfo* ingressinfo_ = bpf_map_lookup_elem(&ingress_cache, &iphdr->daddr);
+    ///////////////////////// Header/ifindex Learning ////////////////////
+    struct oncache_ingress_v1* ingressinfo_ = bpf_map_lookup_elem(&ingress_cache, &iphdr->daddr);
     if (!ingressinfo_) {
         bpf_printkm("(tc_init_in)ERROR: No pod info found, LocalIP is %x", iphdr->daddr);
         goto out;
     } else {
-        __builtin_memcpy(ingressinfo_->dmac, eth->h_dest, ETH_ALEN);
-        __builtin_memcpy(ingressinfo_->smac, eth->h_source, ETH_ALEN);
+        __builtin_memcpy(ingressinfo_->dst_mac, eth->h_dest, ETH_ALEN);
+        __builtin_memcpy(ingressinfo_->src_mac, eth->h_source, ETH_ALEN);
     }
 
 #ifdef ENABLENP
     ///////////////////////// Policy Learning /////////////////////////
-    struct fivetuple tuple_;
+    struct oncache_flow_v1 tuple_;
     if (parse_5tuple_in(iphdr, data_end, &tuple_)) goto out;
-    struct action eaction_ = {
-        .egress = 0,
-        .ingress = 1
+    struct oncache_action_v1 eaction_ = {
+        .egress_ready = 0,
+        .ingress_ready = 1
     };
     if(bpf_map_update_elem(&policy_cache, &tuple_, &eaction_, BPF_NOEXIST)) {
-        struct action* action_ = bpf_map_lookup_elem(&policy_cache, &tuple_);
+        struct oncache_action_v1* action_ = bpf_map_lookup_elem(&policy_cache, &tuple_);
         if (!action_) {
             bpf_printkm("(tc_init_in)ERROR: Can not lookup policy_cache. goto out");
         } else {
-            action_->ingress = 1;
-            // bpf_printkm("(tc_init_in)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.laddr, tuple_.raddr);
+            action_->ingress_ready = 1;
+            // bpf_printkm("(tc_init_in)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
         }
     // } else {
-        // bpf_printkm("(tc_init_in)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.laddr, tuple_.raddr);
+        // bpf_printkm("(tc_init_in)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
     }
 #endif
     set_ip_tos(ctx, 0, 0);

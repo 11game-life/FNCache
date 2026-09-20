@@ -26,6 +26,7 @@
 #include <linux/types.h>
 #include <getopt.h>
 #include "linux/bpf.h"
+#include "oncache_abi.h"
 
 #define MACLEN 14
 #define IPLEN 20
@@ -54,42 +55,9 @@ struct bpf_elf_map {
     __u32 inner_idx;
 };
 
-// Must pad the struct to avoid eBPf verifier
-// think the stack boundary is iligal.
-// #pragma pack(1)
-struct fivetuple {
-    __be32 laddr;
-    __be32 raddr;
-    __be16 lport;
-    __be16 rport;
-    __u32 protocol;
-};
-
-struct egressinfo {
-    unsigned char outer_header[64];
-    __u32 ifidx;
-};
-
-struct action {
-    __u16 ingress;
-    __u16 egress;
-};
-
-struct devinfo {
-    __be32 ip;
-    unsigned char mac[ETH_ALEN];
-};
-
 struct rule {
-    struct fivetuple fivetuple_;
+    struct oncache_flow_v1 flow;
     int isIngress;
-};
-
-// Should write dmac to a map forahead becuase pod mac is not carried in VXLAN
-struct ingressinfo {
-    __u32 ifidx;
-    unsigned char dmac[ETH_ALEN];
-    unsigned char smac[ETH_ALEN];
 };
 
 #define PORT_AVAILABLE 1024
