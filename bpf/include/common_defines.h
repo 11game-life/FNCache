@@ -1,30 +1,19 @@
 #ifndef __COMMON_DEFINES_H
 #define __COMMON_DEFINES_H
 
-#include <stdint.h>
 #include <stdbool.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <locale.h>
-#include <unistd.h>
-#include <time.h>
-#include <sys/sysinfo.h>
-#include <sys/statfs.h>  /* statfs */
-#include <sys/stat.h>    /* stat(2) + S_IRWXU */
-#include <sys/mount.h>   /* mount(2) */
+#include <stddef.h>
 
-#include <net/if.h>
 #include <linux/if_ether.h>
 #include <linux/types.h>
 #include <linux/pkt_cls.h>
 #include <linux/pkt_sched.h> /* TC_H_MAJ + TC_H_MIN */
 #include <linux/if_packet.h>
+#include <linux/in.h>
 #include <linux/ip.h>
 #include <linux/udp.h>
 #include <linux/tcp.h>
-#include <arpa/inet.h>
 #include <linux/types.h>
-#include <getopt.h>
 #include "linux/bpf.h"
 #include "oncache_abi.h"
 

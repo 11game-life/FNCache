@@ -153,7 +153,7 @@ int tc_masq_func(struct __sk_buff *ctx) {
     }
     ///////////////////////// Start Masqurade /////////////////////////
     // Adjust the head pointer to the start of the inner IP header
-    // The skb->inner protocol must be htons(ETH_P_TEB), thus we need BPF_F_ADJ_ROOM_ENCAP_L2(14)|BPF_F_ADJ_ROOM_ENCAP_L2_ETH flags.
+    // The skb->inner protocol must be bpf_htons(ETH_P_TEB), thus we need BPF_F_ADJ_ROOM_ENCAP_L2(14)|BPF_F_ADJ_ROOM_ENCAP_L2_ETH flags.
     // The other flags are used to adjust some fild in the skb. Need kernel with d01b59c commit, at least 5.13.
     err = bpf_skb_adjust_room(ctx, 50, BPF_ADJ_ROOM_MAC, BPF_F_ADJ_ROOM_FIXED_GSO | BPF_F_ADJ_ROOM_ENCAP_L3_IPV4 | BPF_F_ADJ_ROOM_ENCAP_L4_UDP|BPF_F_ADJ_ROOM_ENCAP_L2(14)|BPF_F_ADJ_ROOM_ENCAP_L2_ETH);
     if (err) {
@@ -168,7 +168,7 @@ int tc_masq_func(struct __sk_buff *ctx) {
     set_new_length_outerhdr(ctx, ctx->len);
     // Set the UDP source port
     hash ^= hash << 16;
-    __be16 sport = htons((((__u64) hash * (PORT_MAX - PORT_MIN)) >> 32) + PORT_MIN);
+    __be16 sport = bpf_htons((((__u64) hash * (PORT_MAX - PORT_MIN)) >> 32) + PORT_MIN);
     bpf_skb_store_bytes(ctx, UDP_PORT_OFF, &sport, sizeof(sport), 0);
 
     ///////////////////////// Redirect to Node NIC /////////////////////////
