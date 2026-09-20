@@ -4,6 +4,9 @@
 #include <linux/types.h>
 
 #define ONCACHE_ABI_VERSION 1U
+#define ONCACHE_PIN_ROOT "/sys/fs/bpf/oncache/v1"
+#define ONCACHE_MAP_PIN_ROOT ONCACHE_PIN_ROOT "/maps"
+#define ONCACHE_PROGRAM_PIN_ROOT ONCACHE_PIN_ROOT "/programs"
 
 struct oncache_flow_v1 {
     __be32 local_addr;

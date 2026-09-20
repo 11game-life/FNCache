@@ -1,6 +1,5 @@
 #include "common_kern.h"
 
-#define PIN_GLOBAL_NS 2
 #define PORT_MIN 49152
 #define PORT_MAX 65535
 #define ENABLENP
@@ -9,7 +8,6 @@ struct bpf_elf_map SEC("maps") ingress_cache = {
     .type = BPF_MAP_TYPE_LRU_HASH,
     .size_key = sizeof(__be32),
     .size_value = sizeof(struct oncache_ingress_v1),
-    .pinning    = PIN_GLOBAL_NS,
     .max_elem = 1024,
 };
 
@@ -17,7 +15,6 @@ struct bpf_elf_map SEC("maps") egressip_cache = {
     .type = BPF_MAP_TYPE_LRU_HASH,
     .size_key = sizeof(__be32),
     .size_value = sizeof(__be32),
-    .pinning    = PIN_GLOBAL_NS,
     .max_elem = 4096
 };
 
@@ -25,7 +22,6 @@ struct bpf_elf_map SEC("maps") egress_cache = {
     .type = BPF_MAP_TYPE_LRU_HASH,
     .size_key = sizeof(__be32),
     .size_value = sizeof(struct oncache_egress_v1),
-    .pinning    = PIN_GLOBAL_NS,
     .max_elem = 1024,
 };
 
@@ -33,7 +29,6 @@ struct bpf_elf_map SEC("maps") policy_cache = {
     .type = BPF_MAP_TYPE_LRU_HASH,
     .size_key = sizeof(struct oncache_flow_v1),
     .size_value = sizeof(struct oncache_action_v1),
-    .pinning    = PIN_GLOBAL_NS,
     .max_elem = 4096,
 };
 
@@ -41,7 +36,6 @@ struct bpf_elf_map SEC("maps") devmap = {
     .type = BPF_MAP_TYPE_LRU_HASH,
     .size_key = sizeof(__u32),
     .size_value = sizeof(struct oncache_device_v1),
-    .pinning    = PIN_GLOBAL_NS,
     .max_elem = 8,
 };
 
