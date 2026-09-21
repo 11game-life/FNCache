@@ -179,10 +179,11 @@ static inline void set_ip_tos(struct __sk_buff *skb, unsigned int off, __u8 tos)
 {
     __u8 old_tos = load_byte(skb, off + IP_TOS_OFF);
     __u8 new_tos;
-    if (tos){
-        new_tos = old_tos | tos;
+    __u8 set_mask = tos & ONCACHE_TOS_MASK;
+    if (set_mask){
+        new_tos = old_tos | set_mask;
     } else {
-        new_tos = old_tos & 0xf3;
+        new_tos = old_tos & (__u8)~ONCACHE_TOS_MASK;
     }
     bpf_l3_csum_replace(
         skb, off + IP_CSUM_OFF, bpf_htons(old_tos), bpf_htons(new_tos), 2);

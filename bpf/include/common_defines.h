@@ -25,6 +25,9 @@
 #define ONCACHE_IPV4_FRAGMENT_MASK 0x3fff
 #define ONCACHE_IPV4_RESERVED_FLAG 0x8000
 #define ONCACHE_VXLAN_I_FLAG 0x08
+#define ONCACHE_MISS_MASK 0x04
+#define ONCACHE_ESTABLISHED_MASK 0x08
+#define ONCACHE_TOS_MASK (ONCACHE_MISS_MASK | ONCACHE_ESTABLISHED_MASK)
 
 #define bpf_printkm(fmt, ...)                                    \
 ({                                                              \
