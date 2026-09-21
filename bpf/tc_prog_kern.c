@@ -39,11 +39,19 @@ struct bpf_elf_map SEC("maps") devmap = {
     .max_elem = 8,
 };
 
+struct bpf_elf_map SEC("maps") control_map = {
+    .type = BPF_MAP_TYPE_ARRAY,
+    .size_key = sizeof(__u32),
+    .size_value = sizeof(struct oncache_control_v1),
+    .max_elem = 1,
+};
+
 SEC("tc_init_e")
 int tc_init_e_func(struct __sk_buff *skb) {
     int err;
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
+    if (!oncache_control_allows()) goto out;
     ////////////////// Check if the packet is a VXLAN packet ////////////////////
     if (data_end < data + MACLEN * 2 + IPLEN * 2 + UDPLEN + VXLANLEN) goto out;
     struct ethhdr *outer_eth = data;
@@ -108,6 +116,7 @@ int tc_masq_func(struct __sk_buff *ctx) {
     int action = TC_ACT_OK, err;
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
+    if (!oncache_control_allows()) goto out;
 
     if (data_end < data + MACLEN + IPLEN) goto out;
     struct ethhdr *eth = data;
@@ -184,6 +193,7 @@ int tc_restore_func(struct __sk_buff *ctx) {
     int action = TC_ACT_OK;
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
+    if (!oncache_control_allows()) goto out;
 
     if (data_end < data + MACLEN * 2 + IPLEN * 2 + UDPLEN + VXLANLEN) goto out;
     struct ethhdr *outer_eth = data;
@@ -260,6 +270,7 @@ int tc_init_in_func(struct __sk_buff *ctx) {
     int action = TC_ACT_OK;
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
+    if (!oncache_control_allows()) goto out;
 
     if (data_end < data + MACLEN + IPLEN) goto out;
     struct ethhdr *eth = data;

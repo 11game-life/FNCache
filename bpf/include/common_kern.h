@@ -5,6 +5,22 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
+extern struct bpf_elf_map control_map;
+
+static __always_inline int oncache_control_allows(void) {
+    __u32 key = 0;
+    struct oncache_control_v1 *control = bpf_map_lookup_elem(&control_map, &key);
+    if (!control || control->abi_version != ONCACHE_ABI_VERSION) return 0;
+    if (control->enabled != 1) return 0;
+    if (control->flags & ONCACHE_CONTROL_FLAG_FORCE_PASS) return 0;
+    if (control->heartbeat_timeout_ns == 0) return 0;
+
+    __u64 now = bpf_ktime_get_ns();
+    if (now < control->heartbeat_ns) return 0;
+    if (now - control->heartbeat_ns > control->heartbeat_timeout_ns) return 0;
+    return 1;
+}
+
 static __always_inline
 int check_l4_bound(int hdr_type, void* l4hdr, void* data_end) {
     if (hdr_type == IPPROTO_UDP) {

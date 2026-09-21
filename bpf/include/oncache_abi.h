@@ -7,6 +7,8 @@
 #define ONCACHE_PIN_ROOT "/sys/fs/bpf/oncache/v1"
 #define ONCACHE_MAP_PIN_ROOT ONCACHE_PIN_ROOT "/maps"
 #define ONCACHE_PROGRAM_PIN_ROOT ONCACHE_PIN_ROOT "/programs"
+#define ONCACHE_CONTROL_FLAG_FORCE_PASS (1U << 0)
+#define ONCACHE_CONTROL_FLAG_DEBUG_COUNTERS (1U << 1)
 
 struct oncache_flow_v1 {
     __be32 local_addr;
