@@ -22,6 +22,9 @@
 #define UDPLEN 8
 #define TCPLEN 20
 #define VXLANLEN 8
+#define ONCACHE_IPV4_FRAGMENT_MASK 0x3fff
+#define ONCACHE_IPV4_RESERVED_FLAG 0x8000
+#define ONCACHE_VXLAN_I_FLAG 0x08
 
 #define bpf_printkm(fmt, ...)                                    \
 ({                                                              \

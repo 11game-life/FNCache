@@ -53,24 +53,18 @@ int tc_init_e_func(struct __sk_buff *skb) {
     void *data_end = (void *)(long)skb->data_end;
     if (!oncache_control_allows()) goto out;
     ////////////////// Check if the packet is a VXLAN packet ////////////////////
-    if (data_end < data + MACLEN * 2 + IPLEN * 2 + UDPLEN + VXLANLEN) goto out;
+    if (data_end < data + sizeof(struct ethhdr)) goto out;
     struct ethhdr *outer_eth = data;
 
     // Check if Ethernet frame has IP packet and set IP hdr ptr
     if (outer_eth->h_proto != bpf_htons(ETH_P_IP)) goto out;
-    struct iphdr *outer_iph = (struct iphdr *)(outer_eth + 1);
-    // Check if IP packet is UDP and set UDP hdr ptr
-    if (outer_iph->protocol != IPPROTO_UDP) goto out;
-    struct udphdr *udph = (struct udphdr *)(outer_iph + 1);
+    struct iphdr *outer_iph;
+    if (!parse_ipv4_header(outer_eth + 1, data_end, &outer_iph)) goto out;
 
-    // Check if UDP packet is VXLAN/Geneve and set VXLAN/Geneve hdr ptr
-    if (!is_encap(udph)) goto out;
-    // UDP hdr = vxlan/geneve header = 8 bytes
-    struct ethhdr * inner_eth = (struct ethhdr *)((void*)udph + UDPLEN + VXLANLEN);
+    struct iphdr *inner_iph;
+    if (!parse_vxlan_ipv4(outer_iph, data_end, &inner_iph)) goto out;
 
     // Check if Ethernet frame has IP packet and set IP hdr ptr
-    if (inner_eth->h_proto != bpf_htons(ETH_P_IP)) goto out;
-    struct iphdr *inner_iph = (struct iphdr *)(inner_eth + 1);
     // Make sure both egress_prog required to and is in established state
     if ((inner_iph->tos & 0xc) != 0xc) goto out;
     /////////////////////////// Policy Learning ///////////////////////////
@@ -118,12 +112,13 @@ int tc_masq_func(struct __sk_buff *ctx) {
     void *data = (void *)(long)ctx->data;
     if (!oncache_control_allows()) goto out;
 
-    if (data_end < data + MACLEN + IPLEN) goto out;
+    if (data_end < data + sizeof(struct ethhdr)) goto out;
     struct ethhdr *eth = data;
 
     // Check if Ethernet frame has IP packet and set IP hdr ptr
     if (eth->h_proto != bpf_htons(ETH_P_IP)) goto out;
-    struct iphdr *iphdr = (struct iphdr *)(eth + 1);
+    struct iphdr *iphdr;
+    if (!parse_ipv4_header(eth + 1, data_end, &iphdr)) goto out;
     // Read for udp source port and policy check
     __u32 hash = bpf_get_hash_recalc(ctx);
 #ifdef ENABLENP
@@ -195,26 +190,18 @@ int tc_restore_func(struct __sk_buff *ctx) {
     void *data = (void *)(long)ctx->data;
     if (!oncache_control_allows()) goto out;
 
-    if (data_end < data + MACLEN * 2 + IPLEN * 2 + UDPLEN + VXLANLEN) goto out;
+    if (data_end < data + sizeof(struct ethhdr)) goto out;
     struct ethhdr *outer_eth = data;
 
     // Check if Ethernet frame has IP packet and set IP hdr ptr
     if (outer_eth->h_proto != bpf_htons(ETH_P_IP)) goto out;
-    struct iphdr *outer_iph = (struct iphdr *)(outer_eth + 1);
+    struct iphdr *outer_iph;
+    if (!parse_ipv4_header(outer_eth + 1, data_end, &outer_iph)) goto out;
 
-    // Check if IP packet is UDP and set UDP hdr ptr
-    if (outer_iph->protocol != IPPROTO_UDP) goto out;
-    struct udphdr *udph = (struct udphdr *)(outer_iph + 1);
-
-    // Check if UDP packet is VXLAN/Geneve and set VXLAN/Geneve/OTV hdr ptr
-    if (!is_encap(udph)) goto out;
-    // UDP hdr = vxlan/geneve header = 8 bytes
-    struct ethhdr * inner_eth = (struct ethhdr *)((void*)udph + UDPLEN + VXLANLEN);
+    struct iphdr *inner_iph;
+    if (!parse_vxlan_ipv4(outer_iph, data_end, &inner_iph)) goto out;
 
     // Check if Ethernet frame has IP packet and set IP hdr ptr
-    if (inner_eth->h_proto != bpf_htons(ETH_P_IP)) goto out;
-    struct iphdr *inner_iph = (struct iphdr *)(inner_eth + 1);
-    
     int ifindex = ctx->ifindex;
     struct oncache_device_v1 *devinfo_ = bpf_map_lookup_elem(&devmap, &ifindex);
     if (!devinfo_ || maccmp(outer_eth->h_dest, devinfo_->mac, ETH_ALEN)) {
@@ -272,11 +259,12 @@ int tc_init_in_func(struct __sk_buff *ctx) {
     void *data = (void *)(long)ctx->data;
     if (!oncache_control_allows()) goto out;
 
-    if (data_end < data + MACLEN + IPLEN) goto out;
+    if (data_end < data + sizeof(struct ethhdr)) goto out;
     struct ethhdr *eth = data;
     // Check if Ethernet frame has IP packet and set IP hdr ptr
     if (eth->h_proto != bpf_htons(ETH_P_IP)) goto out;
-    struct iphdr *iphdr = (struct iphdr *)(eth + 1);
+    struct iphdr *iphdr;
+    if (!parse_ipv4_header(eth + 1, data_end, &iphdr)) goto out;
 
     // We only learn the flow that is marked as 0x4
     if ((iphdr->tos & 0xc) != 0xc) goto out;

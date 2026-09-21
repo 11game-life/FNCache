@@ -21,12 +21,81 @@ static __always_inline int oncache_control_allows(void) {
     return 1;
 }
 
-static __always_inline
-int check_l4_bound(int hdr_type, void* l4hdr, void* data_end) {
-    if (hdr_type == IPPROTO_UDP) {
-        if (data_end < l4hdr + UDPLEN) return 1;
-    } else if (hdr_type == IPPROTO_TCP) {
-        if (data_end < l4hdr + TCPLEN) return 1;
+static __always_inline int parse_ipv4_header(
+        void *cursor, void *data_end, struct iphdr **iph_out) {
+    struct iphdr *iph = cursor;
+    if (data_end < (void *)(iph + 1)) return 0;
+    if (iph->version != 4 || iph->ihl != 5) return 0;
+
+    __u16 frag_off = bpf_ntohs(iph->frag_off);
+    if (frag_off & (ONCACHE_IPV4_FRAGMENT_MASK | ONCACHE_IPV4_RESERVED_FLAG)) {
+        return 0;
+    }
+
+    __u16 total_len = bpf_ntohs(iph->tot_len);
+    if (total_len < sizeof(*iph)) return 0;
+    if ((void *)((__u8 *)iph + total_len) > data_end) return 0;
+
+    *iph_out = iph;
+    return 1;
+}
+
+static __always_inline int parse_vxlan_ipv4(
+        struct iphdr *outer_iph,
+        void *data_end,
+        struct iphdr **inner_iph_out) {
+    if (outer_iph->protocol != IPPROTO_UDP) return 0;
+
+    struct udphdr *udph = (void *)(outer_iph + 1);
+    if (data_end < (void *)(udph + 1)) return 0;
+
+    __u16 outer_len = bpf_ntohs(outer_iph->tot_len);
+    __u16 udp_len = bpf_ntohs(udph->len);
+    if (outer_len < sizeof(*outer_iph) ||
+        udp_len < sizeof(*udph) + VXLANLEN + sizeof(struct ethhdr) ||
+        udp_len > outer_len - sizeof(*outer_iph)) {
+        return 0;
+    }
+
+    void *udp_end = (void *)((__u8 *)udph + udp_len);
+    if (udp_end > data_end) return 0;
+
+    __u8 *vxlan = (void *)(udph + 1);
+    if ((void *)(vxlan + VXLANLEN) > udp_end) return 0;
+    if (vxlan[0] != ONCACHE_VXLAN_I_FLAG ||
+        vxlan[1] != 0 || vxlan[2] != 0 || vxlan[3] != 0 || vxlan[7] != 0) {
+        return 0;
+    }
+
+    struct ethhdr *inner_eth = (void *)(vxlan + VXLANLEN);
+    if ((void *)(inner_eth + 1) > udp_end ||
+        inner_eth->h_proto != bpf_htons(ETH_P_IP)) {
+        return 0;
+    }
+
+    if (!parse_ipv4_header(inner_eth + 1, udp_end, inner_iph_out)) return 0;
+    return 1;
+}
+
+static __always_inline int check_l4_bound(struct iphdr *iph, void *data_end) {
+    void *l4hdr = (void *)(iph + 1);
+    __u16 total_len = bpf_ntohs(iph->tot_len);
+    if (total_len < sizeof(*iph)) return 1;
+
+    __u16 payload_len = total_len - sizeof(*iph);
+    if (iph->protocol == IPPROTO_UDP) {
+        if (payload_len < sizeof(struct udphdr) ||
+            data_end < l4hdr + sizeof(struct udphdr)) {
+            return 1;
+        }
+        struct udphdr *udph = l4hdr;
+        __u16 udp_len = bpf_ntohs(udph->len);
+        if (udp_len < sizeof(*udph) || udp_len > payload_len) return 1;
+    } else if (iph->protocol == IPPROTO_TCP) {
+        if (payload_len < sizeof(struct tcphdr) ||
+            data_end < l4hdr + sizeof(struct tcphdr)) {
+            return 1;
+        }
     }
     return 0;
 }
@@ -35,7 +104,7 @@ static __always_inline
 int parse_5tuple_in(struct iphdr * iph, void *data_end, struct oncache_flow_v1* tuple) {
     int proto = iph->protocol;
 
-    if (check_l4_bound(proto, iph + 1, data_end)) return 1;
+    if (check_l4_bound(iph, data_end)) return 1;
 
     tuple->remote_addr = iph->saddr;
     tuple->local_addr = iph->daddr;
@@ -59,7 +128,7 @@ static __always_inline
 int parse_5tuple_e(struct iphdr * iph, void *data_end, struct oncache_flow_v1* tuple) {
     int proto = iph->protocol;
 
-    if (check_l4_bound(proto, iph + 1, data_end)) return 1;
+    if (check_l4_bound(iph, data_end)) return 1;
 
     tuple->local_addr = iph->saddr;
     tuple->remote_addr = iph->daddr;
@@ -156,13 +225,6 @@ static inline void set_new_length_outerhdr(struct __sk_buff *skb, unsigned int o
     __u16 ip_len = bpf_htons(ori_len - MACLEN);
     bpf_l3_csum_replace(skb, IP_CSUM_OFF, old_len, ip_len, sizeof(ip_len));
     bpf_skb_store_bytes(skb, IP_LEN_OFF, &ip_len, sizeof(ip_len), 0);
-}
-
-// Check if UDP packet is VXLAN/Geneve and set VXLAN/Geneve hdr ptr
-static inline bool is_encap(struct udphdr* udph) {
-    return (udph->dest == bpf_htons(6081) ||
-            udph->dest == bpf_htons(4789) ||
-            udph->dest == bpf_htons(8472));
 }
 
 static __always_inline int maccmp(char* mac1, char* mac2, int len) {
