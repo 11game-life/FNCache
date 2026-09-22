@@ -64,7 +64,7 @@ struct {
 #define PORT_MAX 65535
 #define ENABLENP
 
-SEC("tc_init_e")
+SEC("tc/egress")
 int tc_init_e_func(struct __sk_buff *skb) {
     int err;
     void *data = (void *)(long)skb->data;
@@ -114,7 +114,7 @@ out:
     return TC_ACT_OK;
 }
 
-SEC("tc_masq")
+SEC("tc/ingress")
 int tc_masq_func(struct __sk_buff *ctx) {
     int action = TC_ACT_OK, err;
     void *data_end = (void *)(long)ctx->data_end;
@@ -205,7 +205,7 @@ out:
     return action;
 }
 
-SEC("tc_restore")
+SEC("tc/ingress")
 int tc_restore_func(struct __sk_buff *ctx) {
     int action = TC_ACT_OK;
     void *data_end = (void *)(long)ctx->data_end;
@@ -281,7 +281,7 @@ out:
     return action;
 }
 
-SEC("tc_init_in")
+SEC("tc/ingress")
 int tc_init_in_func(struct __sk_buff *ctx) {
     int action = TC_ACT_OK;
     void *data_end = (void *)(long)ctx->data_end;
