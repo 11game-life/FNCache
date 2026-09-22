@@ -162,6 +162,9 @@ int tc_masq_func(struct __sk_buff *ctx) {
         bpf_printkm("(tc_masq)WARNING: Not ready for restore. LocalIP is %x", iphdr->saddr);
         goto out;
     }
+    if (!oncache_redirect_target_valid(egressinfo_->ifindex, (__u32)ctx->ifindex)) {
+        goto out;
+    }
     ///////////////////////// Start Masqurade /////////////////////////
     // Adjust the head pointer to the start of the inner IP header
     // The skb->inner protocol must be bpf_htons(ETH_P_TEB), thus we need BPF_F_ADJ_ROOM_ENCAP_L2(14)|BPF_F_ADJ_ROOM_ENCAP_L2_ETH flags.
@@ -194,6 +197,7 @@ int tc_masq_func(struct __sk_buff *ctx) {
     ///////////////////////// Redirect to Node NIC /////////////////////////
     // action = bpf_redirect_rpeer(egressinfo_->ifindex, 0);
     action = bpf_redirect(egressinfo_->ifindex, 0);
+    if (action != TC_ACT_REDIRECT) action = TC_ACT_SHOT;
     goto out;
 out:
     return action;
@@ -250,6 +254,9 @@ int tc_restore_func(struct __sk_buff *ctx) {
         bpf_printkm("(tc_restore)WARNING: Not ready for masq. RemoteIP is %x", inner_iph->saddr);
         goto out;
     }
+    if (!oncache_redirect_target_valid(ingressinfo_->ifindex, (__u32)ctx->ifindex)) {
+        goto out;
+    }
 
     if (bpf_skb_adjust_room(ctx, -50, BPF_ADJ_ROOM_MAC, 0)) {
         bpf_printkm("(tc_restore)ERROR: Can not adjust room. goto out");
@@ -267,6 +274,7 @@ int tc_restore_func(struct __sk_buff *ctx) {
     __builtin_memcpy(outer_eth->h_dest, ingressinfo_->dst_mac, ETH_ALEN);
     __builtin_memcpy(outer_eth->h_source, ingressinfo_->src_mac, ETH_ALEN);
     action = bpf_redirect_peer(ingressinfo_->ifindex, 0);
+    if (action != TC_ACT_REDIRECT) action = TC_ACT_SHOT;
 out:
     return action;
 }

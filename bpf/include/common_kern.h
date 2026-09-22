@@ -22,6 +22,11 @@ static __always_inline int oncache_control_allows(void) {
     return 1;
 }
 
+static __always_inline int oncache_redirect_target_valid(
+        __u32 target_ifindex, __u32 current_ifindex) {
+    return target_ifindex != 0 && target_ifindex != current_ifindex;
+}
+
 static __always_inline int parse_ipv4_header(
         void *cursor, void *data_end, struct iphdr **iph_out) {
     struct iphdr *iph = cursor;
