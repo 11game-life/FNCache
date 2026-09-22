@@ -77,7 +77,8 @@ int tc_init_e_func(struct __sk_buff *skb) {
     // Check if Ethernet frame has IP packet and set IP hdr ptr
     if (outer_eth->h_proto != bpf_htons(ETH_P_IP)) goto out;
     struct iphdr *outer_iph;
-    if (!parse_ipv4_header(outer_eth + 1, data_end, &outer_iph)) goto out;
+    __u32 outer_available = (__u8 *)data_end - (__u8 *)(outer_eth + 1);
+    if (!parse_ipv4_header(outer_eth + 1, data_end, outer_available, &outer_iph)) goto out;
 
     struct iphdr *inner_iph;
     if (!parse_vxlan_ipv4(outer_iph, data_end, &inner_iph)) goto out;
@@ -127,7 +128,8 @@ int tc_masq_func(struct __sk_buff *ctx) {
     // Check if Ethernet frame has IP packet and set IP hdr ptr
     if (eth->h_proto != bpf_htons(ETH_P_IP)) goto out;
     struct iphdr *iphdr;
-    if (!parse_ipv4_header(eth + 1, data_end, &iphdr)) goto out;
+    __u32 ip_available = (__u8 *)data_end - (__u8 *)(eth + 1);
+    if (!parse_ipv4_header(eth + 1, data_end, ip_available, &iphdr)) goto out;
     // Read for udp source port and policy check
     __u32 hash = bpf_get_hash_recalc(ctx);
 #ifdef ENABLENP
@@ -218,7 +220,8 @@ int tc_restore_func(struct __sk_buff *ctx) {
     // Check if Ethernet frame has IP packet and set IP hdr ptr
     if (outer_eth->h_proto != bpf_htons(ETH_P_IP)) goto out;
     struct iphdr *outer_iph;
-    if (!parse_ipv4_header(outer_eth + 1, data_end, &outer_iph)) goto out;
+    __u32 outer_available = (__u8 *)data_end - (__u8 *)(outer_eth + 1);
+    if (!parse_ipv4_header(outer_eth + 1, data_end, outer_available, &outer_iph)) goto out;
 
     struct iphdr *inner_iph;
     if (!parse_vxlan_ipv4(outer_iph, data_end, &inner_iph)) goto out;
@@ -293,7 +296,8 @@ int tc_init_in_func(struct __sk_buff *ctx) {
     // Check if Ethernet frame has IP packet and set IP hdr ptr
     if (eth->h_proto != bpf_htons(ETH_P_IP)) goto out;
     struct iphdr *iphdr;
-    if (!parse_ipv4_header(eth + 1, data_end, &iphdr)) goto out;
+    __u32 ip_available = (__u8 *)data_end - (__u8 *)(eth + 1);
+    if (!parse_ipv4_header(eth + 1, data_end, ip_available, &iphdr)) goto out;
 
     // We only learn the flow that is marked as 0x4
     if ((iphdr->tos & ONCACHE_TOS_MASK) != ONCACHE_TOS_MASK) goto out;

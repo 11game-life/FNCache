@@ -38,7 +38,8 @@ static __always_inline void oncache_stat_inc(__u32 stat_id) {
 }
 
 static __always_inline int parse_ipv4_header(
-        void *cursor, void *data_end, struct iphdr **iph_out) {
+        void *cursor, void *data_end, __u32 available_len,
+        struct iphdr **iph_out) {
     struct iphdr *iph = cursor;
     if (data_end < (void *)(iph + 1)) return 0;
     if (iph->version != 4 || iph->ihl != 5) return 0;
@@ -50,7 +51,7 @@ static __always_inline int parse_ipv4_header(
 
     __u16 total_len = bpf_ntohs(iph->tot_len);
     if (total_len < sizeof(*iph)) return 0;
-    if ((void *)((__u8 *)iph + total_len) > data_end) return 0;
+    if (total_len > available_len) return 0;
 
     *iph_out = iph;
     return 1;
@@ -73,23 +74,24 @@ static __always_inline int parse_vxlan_ipv4(
         return 0;
     }
 
-    void *udp_end = (void *)((__u8 *)udph + udp_len);
-    if (udp_end > data_end) return 0;
+    __u32 udp_available = (__u8 *)data_end - (__u8 *)udph;
+    if (udp_len > udp_available) return 0;
 
     __u8 *vxlan = (void *)(udph + 1);
-    if ((void *)(vxlan + VXLANLEN) > udp_end) return 0;
+    if (data_end < (void *)(vxlan + VXLANLEN)) return 0;
     if (vxlan[0] != ONCACHE_VXLAN_I_FLAG ||
         vxlan[1] != 0 || vxlan[2] != 0 || vxlan[3] != 0 || vxlan[7] != 0) {
         return 0;
     }
 
-    struct ethhdr *inner_eth = (void *)(vxlan + VXLANLEN);
-    if ((void *)(inner_eth + 1) > udp_end ||
+    struct ethhdr *inner_eth = (void *)((__u8 *)udph + sizeof(*udph) + VXLANLEN);
+    if (data_end < (void *)(inner_eth + 1) ||
         inner_eth->h_proto != bpf_htons(ETH_P_IP)) {
         return 0;
     }
 
-    if (!parse_ipv4_header(inner_eth + 1, udp_end, inner_iph_out)) return 0;
+    __u32 inner_available = udp_len - sizeof(*udph) - VXLANLEN - sizeof(*inner_eth);
+    if (!parse_ipv4_header(inner_eth + 1, data_end, inner_available, inner_iph_out)) return 0;
     return 1;
 }
 
