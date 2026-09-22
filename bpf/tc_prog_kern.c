@@ -271,7 +271,7 @@ int tc_restore_func(struct __sk_buff *ctx) {
     outer_eth = data;
     __builtin_memcpy(outer_eth->h_dest, ingressinfo_->dst_mac, ETH_ALEN);
     __builtin_memcpy(outer_eth->h_source, ingressinfo_->src_mac, ETH_ALEN);
-    action = bpf_redirect_peer(ingressinfo_->ifindex, 0);
+    action = bpf_redirect(ingressinfo_->ifindex, 0);
     if (action != TC_ACT_REDIRECT) action = TC_ACT_SHOT;
 out:
     return action;
