@@ -1,64 +1,68 @@
+#include "common_defines.h"
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __type(key, __be32);
+    __type(value, struct oncache_ingress_v1);
+    __uint(max_entries, 1024);
+} ingress_cache SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __type(key, __be32);
+    __type(value, __be32);
+    __uint(max_entries, 4096);
+} egressip_cache SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __type(key, __be32);
+    __type(value, struct oncache_egress_v1);
+    __uint(max_entries, 1024);
+} egress_cache SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __type(key, struct oncache_flow_v1);
+    __type(value, struct oncache_action_v1);
+    __uint(max_entries, 4096);
+} policy_cache SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __type(key, __u32);
+    __type(value, struct oncache_device_v1);
+    __uint(max_entries, 8);
+} devmap SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);
+    __type(value, struct oncache_control_v1);
+    __uint(max_entries, 1);
+} control_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);
+    __type(value, struct oncache_policy_lock_v1);
+    __uint(max_entries, 1);
+} policy_lock_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __type(key, __u32);
+    __type(value, __u64);
+    __uint(max_entries, ONCACHE_STAT_COUNT);
+} stats_map SEC(".maps");
+
 #include "common_kern.h"
 
 #define PORT_MIN 49152
 #define PORT_MAX 65535
 #define ENABLENP
-
-struct bpf_elf_map SEC("maps") ingress_cache = {
-    .type = BPF_MAP_TYPE_LRU_HASH,
-    .size_key = sizeof(__be32),
-    .size_value = sizeof(struct oncache_ingress_v1),
-    .max_elem = 1024,
-};
-
-struct bpf_elf_map SEC("maps") egressip_cache = {
-    .type = BPF_MAP_TYPE_LRU_HASH,
-    .size_key = sizeof(__be32),
-    .size_value = sizeof(__be32),
-    .max_elem = 4096
-};
-
-struct bpf_elf_map SEC("maps") egress_cache = {
-    .type = BPF_MAP_TYPE_LRU_HASH,
-    .size_key = sizeof(__be32),
-    .size_value = sizeof(struct oncache_egress_v1),
-    .max_elem = 1024,
-};
-
-struct bpf_elf_map SEC("maps") policy_cache = {
-    .type = BPF_MAP_TYPE_LRU_HASH,
-    .size_key = sizeof(struct oncache_flow_v1),
-    .size_value = sizeof(struct oncache_action_v1),
-    .max_elem = 4096,
-};
-
-struct bpf_elf_map SEC("maps") devmap = {
-    .type = BPF_MAP_TYPE_LRU_HASH,
-    .size_key = sizeof(__u32),
-    .size_value = sizeof(struct oncache_device_v1),
-    .max_elem = 8,
-};
-
-struct bpf_elf_map SEC("maps") control_map = {
-    .type = BPF_MAP_TYPE_ARRAY,
-    .size_key = sizeof(__u32),
-    .size_value = sizeof(struct oncache_control_v1),
-    .max_elem = 1,
-};
-
-struct bpf_elf_map SEC("maps") policy_lock_map = {
-    .type = BPF_MAP_TYPE_ARRAY,
-    .size_key = sizeof(__u32),
-    .size_value = sizeof(struct oncache_policy_lock_v1),
-    .max_elem = 1,
-};
-
-struct bpf_elf_map SEC("maps") stats_map = {
-    .type = BPF_MAP_TYPE_PERCPU_ARRAY,
-    .size_key = sizeof(__u32),
-    .size_value = sizeof(__u64),
-    .max_elem = ONCACHE_STAT_COUNT,
-};
 
 SEC("tc_init_e")
 int tc_init_e_func(struct __sk_buff *skb) {

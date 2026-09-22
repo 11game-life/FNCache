@@ -5,10 +5,6 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
-extern struct bpf_elf_map control_map;
-extern struct bpf_elf_map policy_lock_map;
-extern struct bpf_elf_map stats_map;
-
 static __always_inline int oncache_control_allows(void) {
     __u32 key = 0;
     struct oncache_control_v1 *control = bpf_map_lookup_elem(&control_map, &key);
