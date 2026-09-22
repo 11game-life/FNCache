@@ -6,6 +6,7 @@
 #include <bpf/bpf_endian.h>
 
 extern struct bpf_elf_map control_map;
+extern struct bpf_elf_map policy_lock_map;
 
 static __always_inline int oncache_control_allows(void) {
     __u32 key = 0;
@@ -98,6 +99,22 @@ static __always_inline int check_l4_bound(struct iphdr *iph, void *data_end) {
         }
     }
     return 0;
+}
+
+static __always_inline void oncache_policy_mark_ready(
+        struct oncache_action_v1 *action, __u32 ready_mask) {
+    __u32 key = 0;
+    struct oncache_policy_lock_v1 *lock =
+        bpf_map_lookup_elem(&policy_lock_map, &key);
+    if (!lock) return;
+
+    bpf_spin_lock(&lock->lock);
+    if (ready_mask == ONCACHE_EGRESS_READY_MASK) {
+        action->egress_ready = 1;
+    } else if (ready_mask == ONCACHE_INGRESS_READY_MASK) {
+        action->ingress_ready = 1;
+    }
+    bpf_spin_unlock(&lock->lock);
 }
 
 static __always_inline

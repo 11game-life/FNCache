@@ -28,6 +28,8 @@
 #define ONCACHE_MISS_MASK 0x04
 #define ONCACHE_ESTABLISHED_MASK 0x08
 #define ONCACHE_TOS_MASK (ONCACHE_MISS_MASK | ONCACHE_ESTABLISHED_MASK)
+#define ONCACHE_INGRESS_READY_MASK ((__u32)1)
+#define ONCACHE_EGRESS_READY_MASK ((__u32)1 << 16)
 
 #define bpf_printkm(fmt, ...)                                    \
 ({                                                              \
@@ -48,6 +50,10 @@ struct bpf_elf_map {
         __u32 pinning;
     __u32 inner_id;
     __u32 inner_idx;
+};
+
+struct oncache_policy_lock_v1 {
+    struct bpf_spin_lock lock;
 };
 
 struct rule {

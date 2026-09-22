@@ -46,6 +46,13 @@ struct bpf_elf_map SEC("maps") control_map = {
     .max_elem = 1,
 };
 
+struct bpf_elf_map SEC("maps") policy_lock_map = {
+    .type = BPF_MAP_TYPE_ARRAY,
+    .size_key = sizeof(__u32),
+    .size_value = sizeof(struct oncache_policy_lock_v1),
+    .max_elem = 1,
+};
+
 SEC("tc_init_e")
 int tc_init_e_func(struct __sk_buff *skb) {
     int err;
@@ -80,7 +87,7 @@ int tc_init_e_func(struct __sk_buff *skb) {
         if (!action_) {
             bpf_printkm("(tc_init_e)ERROR: Can not lookup policy_cache. goto out");
         } else {
-            action_->egress_ready = 1;
+            oncache_policy_mark_ready(action_, ONCACHE_EGRESS_READY_MASK);
             // bpf_printkm("(tc_init_e)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
         }
     // } else {
@@ -291,7 +298,7 @@ int tc_init_in_func(struct __sk_buff *ctx) {
         if (!action_) {
             bpf_printkm("(tc_init_in)ERROR: Can not lookup policy_cache. goto out");
         } else {
-            action_->ingress_ready = 1;
+            oncache_policy_mark_ready(action_, ONCACHE_INGRESS_READY_MASK);
             // bpf_printkm("(tc_init_in)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
         }
     // } else {
