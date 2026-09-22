@@ -233,16 +233,26 @@ static inline void set_new_ipid(struct __sk_buff *skb, unsigned int off,  __be16
 }
 
 // The function is used to set the IP length and UDP length according to the orignal length.
-static inline void set_new_length_outerhdr(struct __sk_buff *skb, unsigned int ori_len) {
-    if ((void *)(long)skb->data_end < (void *)(long)skb->data + MACLEN + IPLEN + UDPLEN) return;
+static inline int set_new_length_outerhdr(struct __sk_buff *skb, unsigned int ori_len) {
+    if (ori_len < MACLEN + IPLEN + UDPLEN ||
+        (void *)(long)skb->data_end < (void *)(long)skb->data + MACLEN + IPLEN + UDPLEN) {
+        return -1;
+    }
     __u16 udp_len = bpf_htons(ori_len - MACLEN - IPLEN);
-    bpf_skb_store_bytes(skb, UDP_LEN_OFF, &udp_len, sizeof(udp_len), 0);
+    if (bpf_skb_store_bytes(skb, UDP_LEN_OFF, &udp_len, sizeof(udp_len), 0) < 0) {
+        return -1;
+    }
 
-    if ((void *)(long)skb->data_end < (void *)(long)skb->data + MACLEN + IPLEN) return;
+    if ((void *)(long)skb->data_end < (void *)(long)skb->data + MACLEN + IPLEN) return -1;
     __u16 old_len = bpf_htons(load_half(skb, IP_LEN_OFF));
     __u16 ip_len = bpf_htons(ori_len - MACLEN);
-    bpf_l3_csum_replace(skb, IP_CSUM_OFF, old_len, ip_len, sizeof(ip_len));
-    bpf_skb_store_bytes(skb, IP_LEN_OFF, &ip_len, sizeof(ip_len), 0);
+    if (bpf_l3_csum_replace(skb, IP_CSUM_OFF, old_len, ip_len, sizeof(ip_len)) < 0) {
+        return -1;
+    }
+    if (bpf_skb_store_bytes(skb, IP_LEN_OFF, &ip_len, sizeof(ip_len), 0) < 0) {
+        return -1;
+    }
+    return 0;
 }
 
 static __always_inline int maccmp(char* mac1, char* mac2, int len) {

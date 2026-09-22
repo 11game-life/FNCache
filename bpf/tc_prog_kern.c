@@ -173,14 +173,23 @@ int tc_masq_func(struct __sk_buff *ctx) {
     }
     data = (void *)(long)ctx->data;
     data_end = (void *)(long)ctx->data_end;
-    if (data_end < data + 64) goto out;
+    if (data_end < data + 64) {
+        action = TC_ACT_SHOT;
+        goto out;
+    }
     // Append the outer header
     __builtin_memcpy(data, egressinfo_->outer_header, 64);
-    set_new_length_outerhdr(ctx, ctx->len);
+    if (set_new_length_outerhdr(ctx, ctx->len) < 0) {
+        action = TC_ACT_SHOT;
+        goto out;
+    }
     // Set the UDP source port
     hash ^= hash << 16;
     __be16 sport = bpf_htons((((__u64) hash * (PORT_MAX - PORT_MIN)) >> 32) + PORT_MIN);
-    bpf_skb_store_bytes(ctx, UDP_PORT_OFF, &sport, sizeof(sport), 0);
+    if (bpf_skb_store_bytes(ctx, UDP_PORT_OFF, &sport, sizeof(sport), 0) < 0) {
+        action = TC_ACT_SHOT;
+        goto out;
+    }
 
     ///////////////////////// Redirect to Node NIC /////////////////////////
     // action = bpf_redirect_rpeer(egressinfo_->ifindex, 0);
@@ -249,7 +258,10 @@ int tc_restore_func(struct __sk_buff *ctx) {
     // Check bounds
     data = (void *)(long)ctx->data;
     data_end = (void *)(long)ctx->data_end;
-    if (data_end < data + MACLEN + IPLEN) goto out;
+    if (data_end < data + MACLEN + IPLEN) {
+        action = TC_ACT_SHOT;
+        goto out;
+    }
     // Change MAC to masqed MAC
     outer_eth = data;
     __builtin_memcpy(outer_eth->h_dest, ingressinfo_->dst_mac, ETH_ALEN);
