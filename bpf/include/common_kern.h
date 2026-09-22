@@ -5,6 +5,16 @@
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
+#if defined(ONCACHE_TEST_FAIL_ADJUST_ROOM)
+#define bpf_skb_adjust_room(ctx, len, mode, flags) \
+    ((void)(ctx), (void)(len), (void)(mode), (void)(flags), -1)
+#elif defined(ONCACHE_TEST_FAIL_STORE_BYTES)
+#define bpf_skb_store_bytes(ctx, off, from, len, flags) \
+    ((void)(ctx), (void)(off), (void)(from), (void)(len), (void)(flags), -1)
+#elif defined(ONCACHE_TEST_FAIL_REDIRECT)
+#define bpf_redirect(ifindex, flags) ((void)(ifindex), (void)(flags), TC_ACT_OK)
+#endif
+
 static __always_inline int oncache_control_allows(void) {
     __u32 key = 0;
     struct oncache_control_v1 *control = bpf_map_lookup_elem(&control_map, &key);
