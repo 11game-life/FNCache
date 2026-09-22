@@ -53,6 +53,13 @@ struct bpf_elf_map SEC("maps") policy_lock_map = {
     .max_elem = 1,
 };
 
+struct bpf_elf_map SEC("maps") stats_map = {
+    .type = BPF_MAP_TYPE_PERCPU_ARRAY,
+    .size_key = sizeof(__u32),
+    .size_value = sizeof(__u64),
+    .max_elem = ONCACHE_STAT_COUNT,
+};
+
 SEC("tc_init_e")
 int tc_init_e_func(struct __sk_buff *skb) {
     int err;
@@ -85,13 +92,10 @@ int tc_init_e_func(struct __sk_buff *skb) {
     if(bpf_map_update_elem(&policy_cache, &tuple_, &eaction_, BPF_NOEXIST)) {
         struct oncache_action_v1* action_ = bpf_map_lookup_elem(&policy_cache, &tuple_);
         if (!action_) {
-            bpf_printkm("(tc_init_e)ERROR: Can not lookup policy_cache. goto out");
+            oncache_stat_inc(ONCACHE_STAT_INIT_E_POLICY_LOOKUP_MISS);
         } else {
             oncache_policy_mark_ready(action_, ONCACHE_EGRESS_READY_MASK);
-            // bpf_printkm("(tc_init_e)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
         }
-    // } else {
-        // bpf_printkm("(tc_init_e)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
     }
 #endif
     ///////////////////////// Header cache learning ///////////////////////////////
@@ -99,14 +103,8 @@ int tc_init_e_func(struct __sk_buff *skb) {
     struct oncache_egress_v1 tmpnodeegressinfo_;
     initegressinfo(&tmpnodeegressinfo_, data, skb->ifindex);
     err = bpf_map_update_elem(&egress_cache, &outer_iph->daddr, &tmpnodeegressinfo_, BPF_NOEXIST);
-    // if(!err) {
-        // bpf_printkm("(tc_init_e)INFO: Updated an nodeegressinfo element");
-    // }
 
     err = bpf_map_update_elem(&egressip_cache, &inner_iph->daddr, &outer_iph->daddr, BPF_NOEXIST);
-    // if(!err) {
-        // bpf_printkm("(tc_init_e)INFO: Added an podip element. RemoteIP is %x", inner_iph->daddr);
-    // }
     if (set_ip_tos(skb, 50, 0) < 0) return TC_ACT_OK;
 out:
     return TC_ACT_OK;
@@ -135,7 +133,7 @@ int tc_masq_func(struct __sk_buff *ctx) {
     struct oncache_action_v1 *action_ = bpf_map_lookup_elem(&policy_cache, &tuple_);
     // Must the ingress and egress both allow the flow, or will cause conntrack problem
     if (!action_ || !(action_->ingress_ready & action_->egress_ready)) {
-        // bpf_printkm("(tc_masq)INFO: Cannot masq because of policy. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
+        oncache_stat_inc(ONCACHE_STAT_MASQ_POLICY_MISS);
         if (set_ip_tos(ctx, 0, ONCACHE_MISS_MASK) < 0) return TC_ACT_OK;
         goto out;
     }
@@ -143,7 +141,7 @@ int tc_masq_func(struct __sk_buff *ctx) {
     ///////////////////////// Check for header cache ///////////////////////////////
     __be32* nodeip_ = bpf_map_lookup_elem(&egressip_cache, &iphdr->daddr);
     if (!nodeip_) {
-        bpf_printkm("(tc_masq)WARNING: Can not find nodeip, RemoteIP is %x", iphdr->daddr);
+        oncache_stat_inc(ONCACHE_STAT_MASQ_EGRESSIP_MISS);
         if (set_ip_tos(ctx, 0, ONCACHE_MISS_MASK) < 0) return TC_ACT_OK;
         goto out;
     } 
@@ -151,7 +149,7 @@ int tc_masq_func(struct __sk_buff *ctx) {
     // Use the nodeip to look up the egressinfo for masq
     struct oncache_egress_v1* egressinfo_ = bpf_map_lookup_elem(&egress_cache, nodeip_);
     if (!egressinfo_) {
-        bpf_printkm("(tc_masq)WARNING: Can not find egressinfo. nodedip is %x", &nodeip_);
+        oncache_stat_inc(ONCACHE_STAT_MASQ_EGRESS_CACHE_MISS);
         if (set_ip_tos(ctx, 0, ONCACHE_MISS_MASK) < 0) return TC_ACT_OK;
         goto out;
     }
@@ -159,7 +157,7 @@ int tc_masq_func(struct __sk_buff *ctx) {
     // Check for restore cache
     struct oncache_ingress_v1* ingressinfo_ = bpf_map_lookup_elem(&ingress_cache, &iphdr->saddr);
     if (!ingressinfo_ || ingressinfo_->src_mac[0] == 0x0) {
-        bpf_printkm("(tc_masq)WARNING: Not ready for restore. LocalIP is %x", iphdr->saddr);
+        oncache_stat_inc(ONCACHE_STAT_MASQ_INGRESS_NOT_READY);
         goto out;
     }
     if (!oncache_redirect_target_valid(egressinfo_->ifindex, (__u32)ctx->ifindex)) {
@@ -171,7 +169,7 @@ int tc_masq_func(struct __sk_buff *ctx) {
     // The other flags are used to adjust some fild in the skb. Need kernel with d01b59c commit, at least 5.13.
     err = bpf_skb_adjust_room(ctx, 50, BPF_ADJ_ROOM_MAC, BPF_F_ADJ_ROOM_FIXED_GSO | BPF_F_ADJ_ROOM_ENCAP_L3_IPV4 | BPF_F_ADJ_ROOM_ENCAP_L4_UDP|BPF_F_ADJ_ROOM_ENCAP_L2(14)|BPF_F_ADJ_ROOM_ENCAP_L2_ETH);
     if (err) {
-        bpf_printkm("(tc_masq)ERROR: Can not change head. goto out");
+        oncache_stat_inc(ONCACHE_STAT_MASQ_ADJUST_ROOM_FAIL);
         goto out;
     }
     data = (void *)(long)ctx->data;
@@ -225,11 +223,11 @@ int tc_restore_func(struct __sk_buff *ctx) {
     int ifindex = ctx->ifindex;
     struct oncache_device_v1 *devinfo_ = bpf_map_lookup_elem(&devmap, &ifindex);
     if (!devinfo_ || maccmp(outer_eth->h_dest, devinfo_->mac, ETH_ALEN)) {
-        bpf_printkm("(tc_restore)ERROR: Can not find devinfo or mac wrong.");
+        oncache_stat_inc(ONCACHE_STAT_RESTORE_DEVINFO_MISMATCH);
         goto out;
     }
     if (!devinfo_ || outer_iph->daddr != devinfo_->ipv4) {
-        bpf_printkm("(tc_restore)ERROR: IP wrong.");
+        oncache_stat_inc(ONCACHE_STAT_RESTORE_OUTER_IP_MISMATCH);
         goto out;
     }
     ///////////////////////// Policy Checking /////////////////////////
@@ -238,7 +236,7 @@ int tc_restore_func(struct __sk_buff *ctx) {
     if (parse_5tuple_in(inner_iph, data_end, &tuple_)) goto out;
     struct oncache_action_v1 *action_ = bpf_map_lookup_elem(&policy_cache, &tuple_);
     if (!action_ || !(action_->ingress_ready & action_->egress_ready)) {
-        // bpf_printkm("(tc_restore)INFO: Cannot restore because of policy. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
+        oncache_stat_inc(ONCACHE_STAT_RESTORE_POLICY_MISS);
         if (set_ip_tos(ctx, 50, ONCACHE_MISS_MASK) < 0) return TC_ACT_OK;
         goto out;
     }
@@ -246,12 +244,12 @@ int tc_restore_func(struct __sk_buff *ctx) {
     ///////////////////////// Restore the Packet /////////////////////////
     struct oncache_ingress_v1* ingressinfo_ = bpf_map_lookup_elem(&ingress_cache, &inner_iph->daddr);
     if (!ingressinfo_ || ingressinfo_->src_mac[0] == 0x0) {
-        bpf_printkm("(tc_restore)ERROR: pod info not ready, LocalIP is %x", inner_iph->daddr);
+        oncache_stat_inc(ONCACHE_STAT_RESTORE_POD_NOT_READY);
         if (set_ip_tos(ctx, 50, ONCACHE_MISS_MASK) < 0) return TC_ACT_OK;
         goto out;
     }
     if (!bpf_map_lookup_elem(&egressip_cache, &inner_iph->saddr)) {
-        bpf_printkm("(tc_restore)WARNING: Not ready for masq. RemoteIP is %x", inner_iph->saddr);
+        oncache_stat_inc(ONCACHE_STAT_RESTORE_EGRESSIP_MISS);
         goto out;
     }
     if (!oncache_redirect_target_valid(ingressinfo_->ifindex, (__u32)ctx->ifindex)) {
@@ -259,7 +257,7 @@ int tc_restore_func(struct __sk_buff *ctx) {
     }
 
     if (bpf_skb_adjust_room(ctx, -50, BPF_ADJ_ROOM_MAC, 0)) {
-        bpf_printkm("(tc_restore)ERROR: Can not adjust room. goto out");
+        oncache_stat_inc(ONCACHE_STAT_RESTORE_ADJUST_ROOM_FAIL);
         goto out;
     }
     // Check bounds
@@ -298,7 +296,7 @@ int tc_init_in_func(struct __sk_buff *ctx) {
     ///////////////////////// Header/ifindex Learning ////////////////////
     struct oncache_ingress_v1* ingressinfo_ = bpf_map_lookup_elem(&ingress_cache, &iphdr->daddr);
     if (!ingressinfo_) {
-        bpf_printkm("(tc_init_in)ERROR: No pod info found, LocalIP is %x", iphdr->daddr);
+        oncache_stat_inc(ONCACHE_STAT_INIT_IN_ENDPOINT_MISS);
         goto out;
     } else {
         __builtin_memcpy(ingressinfo_->dst_mac, eth->h_dest, ETH_ALEN);
@@ -316,13 +314,10 @@ int tc_init_in_func(struct __sk_buff *ctx) {
     if(bpf_map_update_elem(&policy_cache, &tuple_, &eaction_, BPF_NOEXIST)) {
         struct oncache_action_v1* action_ = bpf_map_lookup_elem(&policy_cache, &tuple_);
         if (!action_) {
-            bpf_printkm("(tc_init_in)ERROR: Can not lookup policy_cache. goto out");
+            oncache_stat_inc(ONCACHE_STAT_INIT_IN_POLICY_LOOKUP_MISS);
         } else {
             oncache_policy_mark_ready(action_, ONCACHE_INGRESS_READY_MASK);
-            // bpf_printkm("(tc_init_in)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
         }
-    // } else {
-        // bpf_printkm("(tc_init_in)INFO: Added an policy_cache element. tuple_ is %x %x", tuple_.local_addr, tuple_.remote_addr);
     }
 #endif
     if (set_ip_tos(ctx, 0, 0) < 0) return TC_ACT_OK;

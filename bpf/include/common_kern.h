@@ -7,6 +7,7 @@
 
 extern struct bpf_elf_map control_map;
 extern struct bpf_elf_map policy_lock_map;
+extern struct bpf_elf_map stats_map;
 
 static __always_inline int oncache_control_allows(void) {
     __u32 key = 0;
@@ -25,6 +26,19 @@ static __always_inline int oncache_control_allows(void) {
 static __always_inline int oncache_redirect_target_valid(
         __u32 target_ifindex, __u32 current_ifindex) {
     return target_ifindex != 0 && target_ifindex != current_ifindex;
+}
+
+static __always_inline void oncache_stat_inc(__u32 stat_id) {
+    __u32 control_key = 0;
+    struct oncache_control_v1 *control =
+        bpf_map_lookup_elem(&control_map, &control_key);
+    if (!control || !(control->flags & ONCACHE_CONTROL_FLAG_DEBUG_COUNTERS) ||
+        stat_id >= ONCACHE_STAT_COUNT) {
+        return;
+    }
+
+    __u64 *counter = bpf_map_lookup_elem(&stats_map, &stat_id);
+    if (counter) (*counter)++;
 }
 
 static __always_inline int parse_ipv4_header(

@@ -31,12 +31,23 @@
 #define ONCACHE_INGRESS_READY_MASK ((__u32)1)
 #define ONCACHE_EGRESS_READY_MASK ((__u32)1 << 16)
 
-#define bpf_printkm(fmt, ...)                                    \
-({                                                              \
-    char ____fmt[] = fmt;                                   \
-    bpf_trace_printk(____fmt, sizeof(____fmt),              \
-                         ##__VA_ARGS__);                        \
-})
+enum oncache_stat_id {
+    ONCACHE_STAT_INIT_E_POLICY_LOOKUP_MISS,
+    ONCACHE_STAT_MASQ_POLICY_MISS,
+    ONCACHE_STAT_MASQ_EGRESSIP_MISS,
+    ONCACHE_STAT_MASQ_EGRESS_CACHE_MISS,
+    ONCACHE_STAT_MASQ_INGRESS_NOT_READY,
+    ONCACHE_STAT_MASQ_ADJUST_ROOM_FAIL,
+    ONCACHE_STAT_RESTORE_POLICY_MISS,
+    ONCACHE_STAT_RESTORE_DEVINFO_MISMATCH,
+    ONCACHE_STAT_RESTORE_OUTER_IP_MISMATCH,
+    ONCACHE_STAT_RESTORE_POD_NOT_READY,
+    ONCACHE_STAT_RESTORE_EGRESSIP_MISS,
+    ONCACHE_STAT_RESTORE_ADJUST_ROOM_FAIL,
+    ONCACHE_STAT_INIT_IN_ENDPOINT_MISS,
+    ONCACHE_STAT_INIT_IN_POLICY_LOOKUP_MISS,
+    ONCACHE_STAT_COUNT,
+};
 
 #define MAX_IFINDEX 4096
 
