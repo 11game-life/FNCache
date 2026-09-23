@@ -1,6 +1,6 @@
-# ONCache
+# FNCache
 
-ONCache is an experimental eBPF datapath project for accelerating selected
+FNCache is an experimental eBPF datapath project for accelerating selected
 cross-node Pod IPv4 traffic in a Flannel VXLAN environment.
 
 ## Snapshot Status
