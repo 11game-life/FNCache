@@ -155,6 +155,7 @@ const (
 	ReasonBPFABIMismatch     = "BPF_ABI_MISMATCH"
 	ReasonTCForeignConflict  = "TC_FOREIGN_CONFLICT"
 	ReasonEndpointNotReady   = "ENDPOINT_NOT_READY"
+	ReasonNetNSRestoreFailed = "NETNS_RESTORE_FAILED"
 )
 
 type ClassifiedError struct {
