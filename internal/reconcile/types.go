@@ -68,18 +68,18 @@ type ActualState struct {
 }
 
 type OwnershipState struct {
-	SchemaVersion   uint32
-	InstallationID  string
-	NodeUID         string
-	Generation      uint64
-	ELFBuildID      string
-	ABI             uint32
-	Programs        map[string]ProgramState
-	Maps            map[string]MapState
-	Attachments     []AttachmentState
-	Endpoints       map[string]OwnedEndpoint
-	FlannelRule     OwnedRule
-	LastCommittedAt time.Time
+	SchemaVersion   uint32                   `json:"schemaVersion"`
+	InstallationID  string                   `json:"installationID"`
+	NodeUID         string                   `json:"nodeUID"`
+	Generation      uint64                   `json:"generation"`
+	ELFBuildID      string                   `json:"elfBuildID"`
+	ABI             uint32                   `json:"bpfABI"`
+	Programs        map[string]ProgramState  `json:"programs"`
+	Maps            map[string]MapState      `json:"maps"`
+	Attachments     []AttachmentState        `json:"attachments"`
+	Endpoints       map[string]OwnedEndpoint `json:"endpoints"`
+	FlannelRule     OwnedRule                `json:"flannelRule"`
+	LastCommittedAt time.Time                `json:"lastCommittedAt"`
 }
 
 type ControlState struct {
