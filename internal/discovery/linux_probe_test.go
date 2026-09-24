@@ -18,7 +18,7 @@ func TestLinuxProbeReportsBasicCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.KernelRelease != "5.15.0-test" || snapshot.Architecture != runtime.GOARCH || !snapshot.HasBTF || !snapshot.BPFFSMounted {
+	if snapshot.KernelRelease != "5.15.0-test" || snapshot.Architecture != runtime.GOARCH || !snapshot.HasBTF || !snapshot.BPFFSMounted || !snapshot.TCSupported {
 		t.Fatalf("unexpected host snapshot: %+v", snapshot)
 	}
 	for _, check := range snapshot.Checks {
@@ -48,10 +48,17 @@ func TestLinuxProbeReportsMissingCapabilities(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			found := false
 			for _, check := range snapshot.Checks {
-				if check.ReasonCode == tc.reason && check.Supported {
-					t.Fatalf("expected unsupported check: %+v", check)
+				if check.ReasonCode == tc.reason {
+					found = true
+					if check.Supported {
+						t.Fatalf("expected unsupported check: %+v", check)
+					}
 				}
+			}
+			if !found {
+				t.Fatalf("reason %q was not reported", tc.reason)
 			}
 		})
 	}
@@ -60,12 +67,13 @@ func TestLinuxProbeReportsMissingCapabilities(t *testing.T) {
 func probeFixture(t *testing.T, mount, btf, cri bool) (*discovery.LinuxProbe, discovery.PreflightRequest, func()) {
 	t.Helper()
 	root := t.TempDir()
-	for _, dir := range []string{"proc/sys/kernel", "sys/fs/bpf", "sys/kernel/btf", "run"} {
+	for _, dir := range []string{"proc/sys/kernel", "proc/sys/net/ipv4", "sys/fs/bpf", "sys/kernel/btf", "run"} {
 		if err := os.MkdirAll(filepath.Join(root, dir), 0755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	writeFile(t, filepath.Join(root, "proc/sys/kernel/osrelease"), "5.15.0-test\n")
+	writeFile(t, filepath.Join(root, "proc/sys/net/ipv4/ip_forward"), "1\n")
 	mounts := "none /sys/fs/other tmpfs rw 0 0\n"
 	if mount {
 		mounts = "none /sys/fs/bpf bpf rw 0 0\n"
@@ -87,7 +95,27 @@ func probeFixture(t *testing.T, mount, btf, cri bool) (*discovery.LinuxProbe, di
 			_ = listener.Close()
 		}
 	}
-	return discovery.NewLinuxProbe(root), discovery.PreflightRequest{RuntimeURI: "unix:///run/containerd.sock"}, cleanup
+	return discovery.NewLinuxProbeWithRunner(root, fakeCommandRunner), discovery.PreflightRequest{RuntimeURI: "unix:///run/containerd.sock", PinRoot: "/sys/fs/bpf/oncache/v1"}, cleanup
+}
+
+func fakeCommandRunner(_ context.Context, name string, args ...string) ([]byte, error) {
+	switch name {
+	case "bpftool":
+		return []byte("bpf_map_lookup_elem bpf_map_update_elem bpf_get_hash_recalc bpf_skb_adjust_room bpf_skb_store_bytes bpf_spin_lock bpf_spin_unlock direct_action"), nil
+	case "tc":
+		for _, arg := range args {
+			if arg == "filter" {
+				return []byte("[]"), nil
+			}
+		}
+		return []byte(`[{"kind":"clsact"}]`), nil
+	case "ip":
+		return []byte(`[{"dst":"default"}]`), nil
+	case "iptables-nft":
+		return []byte(""), nil
+	default:
+		return []byte(""), nil
+	}
 }
 
 func writeFile(t *testing.T, path, content string) {
