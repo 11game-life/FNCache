@@ -19,9 +19,11 @@ type CapabilityReport struct {
 }
 
 type ProbeResult struct {
-	Supported bool
-	Required  bool
-	Detail    string
+	Supported  bool
+	Required   bool
+	Retryable  bool
+	ReasonCode string
+	Detail     string
 }
 
 type RuntimeInfo struct {
