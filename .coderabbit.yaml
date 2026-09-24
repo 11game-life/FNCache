@@ -1,0 +1,91 @@
+# 简单使用方式：
+# 1. 确认 GitHub 仓库已安装并启用 CodeRabbit App。
+# 2. 将本文件提交到目标分支或 PR 分支。
+# 3. 本配置不会自动审核 PR；在 PR 评论中输入 @coderabbitai review 手动触发。
+# 4. 后续 push 不会自动重新审核，需要再次输入 @coderabbitai review。
+# 5. 在 PR 评论中输入 @coderabbitai configuration，可查看最终生效配置。
+
+# CodeRabbit 评论语言。
+language: "zh-CN"
+
+reviews:
+  # 保持最严格的内置审查档位。
+  profile: "assertive"
+
+  # 不允许 CodeRabbit 自动批准或替用户决定合并。
+  request_changes_workflow: false
+
+  # 关闭非必要输出，减少审核耗时。
+  high_level_summary: false
+  high_level_summary_in_walkthrough: false
+  review_details: false
+  changed_files_summary: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  suggested_labels: false
+  suggested_reviewers: false
+  poem: false
+
+  # 不在行级评论中添加给其他 AI Agent 使用的提示词。
+  enable_prompt_for_ai_agents: false
+
+  auto_review:
+    # 只有显式执行 @coderabbitai review 才启动审核。
+    enabled: false
+    auto_incremental_review: false
+    drafts: false
+    labels: []
+    description_keyword: ""
+
+  path_filters:
+    # 忽略构建产物和第三方代码。
+    - "!**/build/**"
+    - "!**/dist/**"
+    - "!**/*.o"
+    - "!**/*.ll"
+    - "!**/*.a"
+    - "!**/vendor/**"
+
+  tools:
+    # 保留与本 Go/eBPF 仓库最相关的检查。
+    golangci-lint:
+      enabled: true
+    clang:
+      enabled: true
+    actionlint:
+      enabled: true
+    gitleaks:
+      enabled: true
+
+    # 关闭重复或较慢的检查，缩短手动审核时间。
+    cppcheck:
+      enabled: false
+    checkmake:
+      enabled: false
+    zizmor:
+      enabled: false
+    osvScanner:
+      enabled: false
+    yamllint:
+      enabled: false
+    markdownlint:
+      enabled: false
+
+  finishing_touches:
+    # 不允许自动生成代码、修复代码、提交变更或解决冲突。
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+
+chat:
+  # 只有显式提及 CodeRabbit 时才回复。
+  auto_reply: false
