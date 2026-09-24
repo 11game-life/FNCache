@@ -37,9 +37,14 @@ type RemoteEndpoint struct {
 }
 
 type DatapathSpec struct {
-	ABI        uint32
-	PinRoot    string
-	Generation uint64
+	ABI                uint32
+	PinRoot            string
+	Generation         uint64
+	VXLANVNI           uint32
+	VXLANUDPPort       uint16
+	UnderlayIfIndex    int
+	UnderlayIPv4       netip.Addr
+	OverlayFingerprint string
 }
 
 type DesiredState struct {
