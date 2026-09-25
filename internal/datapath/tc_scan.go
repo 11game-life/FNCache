@@ -1,0 +1,64 @@
+package datapath
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/cat-cc-Lcos/FNCache/internal/discovery"
+	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
+	"github.com/cat-cc-Lcos/FNCache/internal/resolver"
+)
+
+type TCScanner struct {
+	manager *TCManager
+	now     func() time.Time
+}
+
+func NewTCScanner(manager *TCManager) (*TCScanner, error) {
+	if manager == nil {
+		return nil, fmt.Errorf("TC manager is required")
+	}
+	return &TCScanner{manager: manager, now: time.Now}, nil
+}
+
+func (s *TCScanner) Scan(ctx context.Context, links []resolver.LinkIdentity) (reconcile.ActualState, error) {
+	actual := reconcile.ActualState{ScannedAt: s.now()}
+	seen := make(map[struct {
+		ns    uint64
+		index int
+	}]struct{}, len(links))
+	for _, link := range links {
+		key := struct {
+			ns    uint64
+			index int
+		}{link.NetNSInode, link.IfIndex}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if err := ctx.Err(); err != nil {
+			return reconcile.ActualState{}, err
+		}
+		filters, err := s.manager.ListFilters(ctx, link)
+		if err != nil {
+			return reconcile.ActualState{}, fmt.Errorf("scan TC filters on ifindex %d: %w", link.IfIndex, err)
+		}
+		for _, filter := range filters {
+			actual.Attachments = append(actual.Attachments, reconcile.AttachmentState{
+				Link: filter.Link, Hook: string(filter.Hook), Program: filter.Program,
+				Priority: filter.Priority, Handle: filter.Handle, ProgramID: filter.ProgramID,
+			})
+			if filter.Program == "" || filter.ProgramID == 0 {
+				actual.Conflicts = append(actual.Conflicts, discovery.Conflict{
+					Kind: "tc-filter", Identity: tcFilterIdentity(filter), Detail: "filter program identity is not verifiable",
+				})
+			}
+		}
+	}
+	return actual, nil
+}
+
+func tcFilterIdentity(filter TCFilterState) string {
+	return fmt.Sprintf("%d/%d/%s/%d/%d", filter.Link.IfIndex, filter.Link.NetNSInode, filter.Hook, filter.Priority, filter.Handle)
+}
