@@ -29,6 +29,8 @@ type ReconcileKey struct {
 
 type AgentState string
 
+const BPFABIVersion uint32 = 1
+
 const (
 	AgentBootstrapping AgentState = "Bootstrapping"
 	AgentDisabled      AgentState = "Disabled"
@@ -61,6 +63,21 @@ type RemoteEndpoint struct {
 	NodeIPv4 netip.Addr
 }
 
+type FlannelState struct {
+	BackendType     string
+	VXLANLink       resolver.LinkIdentity
+	UnderlayLink    resolver.LinkIdentity
+	UnderlayIPv4    netip.Addr
+	PodCIDR         netip.Prefix
+	VNI             uint32
+	UDPPort         uint16
+	MTU             int
+	MissMask        uint8
+	EstablishedMask uint8
+	IPTablesBackend string
+	Fingerprint     string
+}
+
 type DatapathSpec struct {
 	ABI                uint32
 	PinRoot            string
@@ -76,6 +93,7 @@ type DesiredState struct {
 	Generation      uint64
 	Enabled         bool
 	Capability      discovery.CapabilityReport
+	Flannel         FlannelState
 	LocalEndpoints  map[string]resolver.Endpoint
 	RemoteEndpoints map[netip.Addr]RemoteEndpoint
 	Datapath        DatapathSpec
