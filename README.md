@@ -1,6 +1,7 @@
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/8aaeb829-b50f-4f33-a6b9-05f0cc5643a8" width="100" height="100" alt="FNCache Logo" />
-</p>
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/0a7d797a-1782-45c7-8a50-a5fafac29a1c" width="100" height="100" alt="Weixin Image">
+</div>
+
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-experimental-orange" alt="Status" />
