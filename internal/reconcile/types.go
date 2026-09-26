@@ -27,6 +27,31 @@ type ReconcileKey struct {
 	Reason    string
 }
 
+type AgentState string
+
+const (
+	AgentBootstrapping AgentState = "Bootstrapping"
+	AgentDisabled      AgentState = "Disabled"
+	AgentReconciling   AgentState = "Reconciling"
+	AgentReady         AgentState = "Ready"
+	AgentDegraded      AgentState = "Degraded"
+	AgentStopping      AgentState = "Stopping"
+)
+
+type ActionResult struct {
+	Name      string
+	Completed bool
+}
+
+type ReconcileResult struct {
+	Generation   uint64
+	Changed      bool
+	Requeue      bool
+	RequeueAfter time.Duration
+	Actions      []ActionResult
+	State        AgentState
+}
+
 func (k ReconcileKey) QueueKey() string {
 	return strings.Join([]string{string(k.Kind), k.Namespace, k.Name, k.UID}, "\x00")
 }
