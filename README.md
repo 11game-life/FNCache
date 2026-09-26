@@ -15,7 +15,7 @@
 
 ---
 
-## License
+<h2 align="center">License</h2>
 
 <p align="center">
   <a href="https://app.fossa.com/projects/git%2Bgithub.com%2Fareniya%2FFNCache?ref=badge_large">
