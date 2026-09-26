@@ -124,10 +124,15 @@ func (m *TCManager) EnsureFilter(ctx context.Context, spec TCFilterSpec) (TCFilt
 		if current.Hook != spec.Hook || current.Priority != spec.Priority {
 			continue
 		}
-		if sameFilter(current, spec) {
-			return current, nil
+		if current.Handle == spec.Handle {
+			if sameFilter(current, spec) {
+				return current, nil
+			}
+			return TCFilterState{}, foreignConflict("fixed TC handle is occupied by another filter")
 		}
-		return TCFilterState{}, foreignConflict("fixed TC priority is occupied by another filter")
+		if !isFixedAttachment(current) {
+			return TCFilterState{}, foreignConflict("fixed TC priority is occupied by another filter")
+		}
 	}
 	state, err := m.backend.AttachFilter(ctx, spec)
 	if err != nil {
@@ -200,6 +205,11 @@ func sameFilter(current TCFilterState, expected TCFilterSpec) bool {
 	return sameLink(current.Link, expected.Link) && current.Hook == expected.Hook &&
 		current.ProgramID == expected.ProgramID && current.Priority == expected.Priority &&
 		current.Handle == expected.Handle && current.DirectAction == expected.DirectAction
+}
+
+func isFixedAttachment(filter TCFilterState) bool {
+	fixed, ok := fixedAttachments[filter.Program]
+	return ok && fixed.hook == filter.Hook && fixed.handle == filter.Handle
 }
 
 func sameLink(current, expected resolver.LinkIdentity) bool {

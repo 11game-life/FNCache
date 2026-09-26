@@ -106,6 +106,35 @@ func TestTCManagerEnsureIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestTCManagerAllowsFixedIngressFiltersToCoexist(t *testing.T) {
+	link := testLink()
+	backend := &fakeTCBackend{qdisc: TCQdiscState{Link: link, Exists: true}}
+	manager, err := NewTCManager(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	programs := []struct {
+		name string
+		id   uint32
+	}{
+		{name: "tc_restore", id: 10},
+		{name: "tc_masq", id: 11},
+		{name: "tc_init_in", id: 12},
+	}
+	for _, program := range programs {
+		spec, err := NewFixedFilter(link, program.name, program.id, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.EnsureFilter(context.Background(), spec); err != nil {
+			t.Fatalf("failed to attach %s: %v", program.name, err)
+		}
+	}
+	if backend.attached != len(programs) || len(backend.filters) != len(programs) {
+		t.Fatalf("fixed ingress filters did not coexist: attached=%d filters=%d", backend.attached, len(backend.filters))
+	}
+}
+
 func TestTCManagerRejectsFixedPriorityConflict(t *testing.T) {
 	link := testLink()
 	backend := &fakeTCBackend{
