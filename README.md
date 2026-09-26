@@ -1,4 +1,4 @@
-<img width="1254" height="1254" alt="Untitled" src="https://github.com/user-attachments/assets/8aaeb829-b50f-4f33-a6b9-05f0cc5643a8" />
+<img width="254" height="254" alt="Untitled" src="https://github.com/user-attachments/assets/8aaeb829-b50f-4f33-a6b9-05f0cc5643a8" />
 ---
 
 FNCache is an experimental eBPF datapath project for accelerating selected
