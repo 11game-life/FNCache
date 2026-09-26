@@ -12,11 +12,10 @@
   <img src="https://img.shields.io/badge/Flannel-VXLAN-important" alt="Flannel VXLAN" />
   <img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License" />
 </p>
+
 ---
 
 ## License
-
-Licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
 
 <p align="center">
   <a href="https://app.fossa.com/projects/git%2Bgithub.com%2Fareniya%2FFNCache?ref=badge_large">
