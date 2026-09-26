@@ -1,6 +1,6 @@
 <div align="center">
   <img src="https://github.com/user-attachments/assets/0a7d797a-1782-45c7-8a50-a5fafac29a1c" width="100" height="100" alt="FNCache Logo">
-  <h3>FNCache</h3>
+  <h2>FNCache</h2>
 </div>
 
 <p align="center">
