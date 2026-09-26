@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/0a7d797a-1782-45c7-8a50-a5fafac29a1c" width="100" height="100" alt="Weixin Image">
+  <img src="https://github.com/user-attachments/assets/0a7d797a-1782-45c7-8a50-a5fafac29a1c" width="100" height="100" alt="FNCache Logo">
+  <h3>FNCache</h3>
 </div>
-
 
 <p align="center">
   <img src="https://img.shields.io/badge/status-experimental-orange" alt="Status" />
@@ -12,10 +12,9 @@
 
 ---
 
-## FNCache
+## Introduction
 Experimental eBPF datapath for accelerating selected cross-node Pod IPv4 traffic in a Flannel VXLAN environment.
 
 ## License
-
 
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fareniya%2FFNCache.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fareniya%2FFNCache?ref=badge_large)
