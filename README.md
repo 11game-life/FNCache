@@ -11,7 +11,7 @@
 
 ---
 
-#### **FNCache**: Experimental eBPF datapath for accelerating selected cross-node Pod IPv4 traffic in a Flannel VXLAN environment.
+**FNCache**: Experimental eBPF datapath for accelerating selected cross-node Pod IPv4 traffic in a Flannel VXLAN environment.
 
 ## License
 
