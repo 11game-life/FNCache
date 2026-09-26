@@ -115,3 +115,43 @@ func TestCoordinatorHonorsCancellationBeforeStart(t *testing.T) {
 		t.Fatalf("unexpected cancellation result: result=%+v err=%v steps=%v", result, err, backend.steps)
 	}
 }
+
+func TestCoordinatorStopsAfterEveryFailedStage(t *testing.T) {
+	stages := []string{"disable", "discover", "scan", "ensure", "verify", "commit", "publish"}
+	for _, failedStage := range stages {
+		t.Run(failedStage, func(t *testing.T) {
+			backend := &fakeBackend{desired: DesiredState{Generation: 42}, failStep: failedStage}
+			coordinator, err := NewCoordinator(backend)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := coordinator.FullReconcile(context.Background())
+			if err == nil || result.State != AgentDisabled || coordinator.State() != AgentDisabled {
+				t.Fatalf("failed reconcile was not disabled: result=%+v err=%v", result, err)
+			}
+			for i, stage := range backend.steps {
+				if stage == failedStage {
+					if len(backend.steps) != i+1 {
+						t.Fatalf("stages ran after %s failure: %v", failedStage, backend.steps)
+					}
+					return
+				}
+			}
+			t.Fatalf("failed stage was not called: stage=%s calls=%v", failedStage, backend.steps)
+		})
+	}
+}
+
+func TestCoordinatorRecoversAfterFailedReconcile(t *testing.T) {
+	backend := &fakeBackend{desired: DesiredState{Generation: 42}, failStep: "verify"}
+	coordinator, _ := NewCoordinator(backend)
+	if _, err := coordinator.FullReconcile(context.Background()); err == nil {
+		t.Fatal("expected first reconcile to fail")
+	}
+	backend.failStep = ""
+	backend.steps = nil
+	result, err := coordinator.FullReconcile(context.Background())
+	if err != nil || result.State != AgentReady || coordinator.State() != AgentReady {
+		t.Fatalf("coordinator did not recover: result=%+v err=%v", result, err)
+	}
+}
