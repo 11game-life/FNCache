@@ -106,6 +106,32 @@ func TestControlWriterDisableRejectsInvalidOrUnavailableMap(t *testing.T) {
 	}
 }
 
+func TestControlWriterPublishEnablesNewGeneration(t *testing.T) {
+	fake := &fakeControlMap{value: ControlV1{ABIVersion: 1, Enabled: 0, Generation: 4, Flags: 1}}
+	writer, err := newControlWriter(t.TempDir(), func(string) (controlMap, error) { return fake, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Publish(context.Background(), 42, 100, 500, 3); err != nil {
+		t.Fatal(err)
+	}
+	if fake.updated.Enabled != 1 || fake.updated.Generation != 42 || fake.updated.HeartbeatNS != 100 ||
+		fake.updated.HeartbeatTimeoutNS != 500 || fake.updated.Flags != 3 || fake.updated.Reserved != 0 {
+		t.Fatalf("unexpected published control state: %+v", fake.updated)
+	}
+}
+
+func TestControlWriterPublishRejectsInvalidHeartbeat(t *testing.T) {
+	called := false
+	writer, _ := newControlWriter(t.TempDir(), func(string) (controlMap, error) {
+		called = true
+		return &fakeControlMap{value: ControlV1{ABIVersion: 1}}, nil
+	})
+	if err := writer.Publish(context.Background(), 1, 0, 500, 0); err == nil || called {
+		t.Fatalf("invalid heartbeat was accepted: err=%v called=%v", err, called)
+	}
+}
+
 func TestControlWriterDisableHonorsCancellation(t *testing.T) {
 	called := false
 	writer, _ := newControlWriter(t.TempDir(), func(string) (controlMap, error) {

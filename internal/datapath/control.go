@@ -63,12 +63,53 @@ func (w *ControlWriter) Disable(ctx context.Context) error {
 	if err := control.Lookup(key, &value); err != nil {
 		return fmt.Errorf("read control Map: %w", err)
 	}
-	if value.ABIVersion != controlMapABIVersion {
-		return fmt.Errorf("control Map ABI mismatch: got %d want %d", value.ABIVersion, controlMapABIVersion)
+	if err := validateControlValue(value); err != nil {
+		return err
 	}
 	value.Enabled = 0
 	if err := control.Update(key, &value, ebpf.UpdateAny); err != nil {
 		return fmt.Errorf("disable fast path: %w", err)
+	}
+	return nil
+}
+
+func (w *ControlWriter) Publish(ctx context.Context, generation, heartbeatNS, heartbeatTimeoutNS uint64, flags uint32) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if heartbeatNS == 0 || heartbeatTimeoutNS == 0 {
+		return fmt.Errorf("heartbeat values must be non-zero")
+	}
+	path := filepath.Join(w.pinRoot, "maps", "control_map")
+	control, err := w.open(path)
+	if err != nil {
+		return fmt.Errorf("open control Map: %w", err)
+	}
+	defer func() { _ = control.Close() }()
+
+	key := uint32(0)
+	var value ControlV1
+	if err := control.Lookup(key, &value); err != nil {
+		return fmt.Errorf("read control Map: %w", err)
+	}
+	if err := validateControlValue(value); err != nil {
+		return err
+	}
+	value.Enabled = 1
+	value.Generation = generation
+	value.HeartbeatNS = heartbeatNS
+	value.HeartbeatTimeoutNS = heartbeatTimeoutNS
+	value.Flags = flags
+	value.Reserved = 0
+	if err := control.Update(key, &value, ebpf.UpdateAny); err != nil {
+		return fmt.Errorf("publish fast path: %w", err)
+	}
+	return nil
+}
+
+func validateControlValue(value ControlV1) error {
+	if value.ABIVersion != controlMapABIVersion {
+		return fmt.Errorf("control Map ABI mismatch: got %d want %d", value.ABIVersion, controlMapABIVersion)
 	}
 	return nil
 }
