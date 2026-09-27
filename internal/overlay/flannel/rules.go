@@ -20,53 +20,180 @@ type RuleScanner struct {
 	run CommandRunner
 }
 
+type MarkerRuleManager struct {
+	run CommandRunner
+}
+
+type markerRuleMatch struct {
+	state       reconcile.RuleState
+	line        string
+	lineNumber  int
+	chainExists bool
+	found       bool
+}
+
+const markerConflictReason = "NETFILTER_MARKER_CONFLICT"
+
 func NewRuleScanner(run CommandRunner) *RuleScanner {
 	discovery := NewDiscovery(run)
 	return &RuleScanner{run: discovery.run}
 }
 
+func NewMarkerRuleManager(run CommandRunner) *MarkerRuleManager {
+	discovery := NewDiscovery(run)
+	return &MarkerRuleManager{run: discovery.run}
+}
+
 func (s *RuleScanner) Scan(ctx context.Context, spec MarkerRuleSpec) (reconcile.RuleState, error) {
-	if err := validateMarkerRuleSpec(spec); err != nil {
-		return reconcile.RuleState{}, err
-	}
-	state := reconcile.RuleState{Identity: spec.Chain + "/" + spec.Comment}
-	if err := ctx.Err(); err != nil {
-		return state, err
-	}
-	output, err := s.run(ctx, "iptables", "-t", "mangle", "-S")
+	match, err := readMarkerRule(ctx, s.run, spec)
 	if err != nil {
 		return reconcile.RuleState{}, fmt.Errorf("scan Flannel marker rules: %w", err)
 	}
-	if err := ctx.Err(); err != nil {
-		return reconcile.RuleState{}, err
+	return match.state, nil
+}
+
+func (m *MarkerRuleManager) Ensure(ctx context.Context, spec MarkerRuleSpec) (reconcile.RuleState, bool, error) {
+	if err := validateMarkerRuleSpec(spec); err != nil {
+		return reconcile.RuleState{}, false, err
 	}
-	var match string
-	for _, line := range strings.Split(string(output), "\n") {
-		chain, ok := ruleChain(line)
-		if !ok || !ruleHasComment(line, spec.Comment) {
+	match, err := readMarkerRule(ctx, m.run, spec)
+	if err != nil {
+		return reconcile.RuleState{}, false, err
+	}
+	desiredLine := markerRuleLine(spec)
+	if match.found && match.line == desiredLine {
+		return match.state, false, nil
+	}
+
+	var args []string
+	if match.found {
+		args = append([]string{"-t", "mangle", "-R", spec.Chain, strconv.Itoa(match.lineNumber)}, markerRuleArgs(spec)...)
+	} else {
+		if !match.chainExists {
+			if _, err := m.run(ctx, "iptables-nft", "-t", "mangle", "-N", spec.Chain); err != nil {
+				return reconcile.RuleState{}, false, fmt.Errorf("create marker chain: %w", err)
+			}
+		}
+		args = append([]string{"-t", "mangle", "-A", spec.Chain}, markerRuleArgs(spec)...)
+	}
+	if _, err := m.run(ctx, "iptables-nft", args...); err != nil {
+		return reconcile.RuleState{}, false, fmt.Errorf("apply marker rule: %w", err)
+	}
+	verified, err := readMarkerRule(ctx, m.run, spec)
+	if err != nil {
+		return reconcile.RuleState{}, false, fmt.Errorf("verify marker rule: %w", err)
+	}
+	if !verified.found || verified.line != desiredLine {
+		return reconcile.RuleState{}, false, fmt.Errorf("marker rule verification mismatch")
+	}
+	return verified.state, true, nil
+}
+
+func (m *MarkerRuleManager) Remove(ctx context.Context, owned reconcile.OwnedRule) error {
+	spec, err := markerSpecFromOwned(owned)
+	if err != nil {
+		return err
+	}
+	match, err := readMarkerRule(ctx, m.run, spec)
+	if err != nil {
+		return err
+	}
+	if !match.found {
+		return nil
+	}
+	if owned.Fingerprint == "" || match.state.Fingerprint != owned.Fingerprint {
+		return markerConflict("marker rule identity changed before removal")
+	}
+	if _, err := m.run(ctx, "iptables-nft", "-t", "mangle", "-D", spec.Chain, strconv.Itoa(match.lineNumber)); err != nil {
+		return fmt.Errorf("remove marker rule: %w", err)
+	}
+	remaining, err := readMarkerRule(ctx, m.run, spec)
+	if err != nil {
+		return fmt.Errorf("verify marker removal: %w", err)
+	}
+	if remaining.found {
+		return fmt.Errorf("marker rule remains after removal")
+	}
+	return nil
+}
+
+func readMarkerRule(ctx context.Context, run CommandRunner, spec MarkerRuleSpec) (markerRuleMatch, error) {
+	if err := validateMarkerRuleSpec(spec); err != nil {
+		return markerRuleMatch{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return markerRuleMatch{}, err
+	}
+	output, err := run(ctx, "iptables-nft", "-t", "mangle", "-S")
+	if err != nil {
+		return markerRuleMatch{}, err
+	}
+	match := markerRuleMatch{state: reconcile.RuleState{Identity: spec.Chain + "/" + spec.Comment}}
+	for _, raw := range strings.Split(string(output), "\n") {
+		line := strings.TrimSpace(raw)
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "-N" && fields[1] == spec.Chain {
+			match.chainExists = true
+		}
+		if len(fields) < 2 || fields[0] != "-A" {
+			continue
+		}
+		chain := fields[1]
+		if chain == spec.Chain {
+			match.lineNumber++
+		}
+		if !ruleHasComment(line, spec.Comment) {
 			continue
 		}
 		if chain != spec.Chain {
-			return reconcile.RuleState{}, fmt.Errorf("marker comment found in chain %q, want %q", chain, spec.Chain)
+			return markerRuleMatch{}, markerConflict("marker comment found in another chain")
 		}
-		if match != "" {
-			return reconcile.RuleState{}, fmt.Errorf("marker rule comment is duplicated in chain %q", spec.Chain)
+		if match.found {
+			return markerRuleMatch{}, markerConflict("marker rule comment is duplicated")
 		}
-		match = strings.TrimSpace(line)
+		match.found = true
+		match.line = line
+		match.state.Present = true
+		match.state.Fingerprint = ruleFingerprint(line)
 	}
-	if match == "" {
-		return state, nil
+	return match, nil
+}
+
+func markerRuleArgs(spec MarkerRuleSpec) []string {
+	return []string{"-m", "comment", "--comment", spec.Comment, "-m", "conntrack", "--ctstate", "ESTABLISHED", "-m", "tos", "--tos", "0x04/0x04", "-j", "TOS", "--set-tos", "0x08/0x08"}
+}
+
+func markerRuleLine(spec MarkerRuleSpec) string {
+	args := markerRuleArgs(spec)
+	for i, arg := range args {
+		if i == 3 {
+			args[i] = strconv.Quote(arg)
+		}
 	}
-	state.Present = true
-	state.Fingerprint = ruleFingerprint(match)
-	return state, nil
+	return strings.Join(append([]string{"-A", spec.Chain}, args...), " ")
+}
+
+func markerSpecFromOwned(owned reconcile.OwnedRule) (MarkerRuleSpec, error) {
+	parts := strings.SplitN(owned.Identity, "/", 2)
+	if len(parts) != 2 {
+		return MarkerRuleSpec{}, fmt.Errorf("owned marker identity is invalid: %q", owned.Identity)
+	}
+	comment := owned.Comment
+	if comment == "" || comment == owned.Identity {
+		comment = parts[1]
+	}
+	return MarkerRuleSpec{Chain: parts[0], Comment: comment}, validateMarkerRuleSpec(MarkerRuleSpec{Chain: parts[0], Comment: comment})
+}
+
+func markerConflict(message string) error {
+	return reconcile.NewClassifiedError(reconcile.ErrorConflict, markerConflictReason, 0, fmt.Errorf("%s", message))
 }
 
 func validateMarkerRuleSpec(spec MarkerRuleSpec) error {
 	if strings.TrimSpace(spec.Chain) == "" || strings.ContainsAny(spec.Chain, " \t\r\n") {
 		return fmt.Errorf("marker rule chain is invalid")
 	}
-	if spec.Comment == "" || strings.ContainsAny(spec.Comment, "\"\r\n") {
+	if spec.Comment == "" || strings.ContainsAny(spec.Comment, " \t\"\r\n/") {
 		return fmt.Errorf("marker rule comment is invalid")
 	}
 	return nil
