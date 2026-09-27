@@ -4,7 +4,6 @@ package integration_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/netip"
 	"os"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/cat-cc-Lcos/FNCache/internal/controlplane"
 	"github.com/cat-cc-Lcos/FNCache/internal/datapath"
+	"github.com/cat-cc-Lcos/FNCache/internal/ownership"
 	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
 	"github.com/cat-cc-Lcos/FNCache/internal/resolver"
 	"github.com/cilium/ebpf"
@@ -39,99 +39,50 @@ func TestM2NetnsTCEnsureRestartAndConflict(t *testing.T) {
 		t.Fatalf("integration pin root already exists: %s", pinRoot)
 	}
 	defer os.RemoveAll(pinRoot)
-
-	loaded, actual := loadPinnedCollection(t, elf, pinRoot)
-	closed := false
-	t.Cleanup(func() {
-		if !closed {
-			_ = loaded.Close()
-		}
-	})
-
-	backend, err := datapath.NewLinuxTCBackend(pinRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tc, err := datapath.NewTCManager(backend)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base, err := controlplane.NewBaseEnsurer(tc)
-	if err != nil {
-		t.Fatal(err)
-	}
+	statePath := filepath.Join(t.TempDir(), "state.json")
 	var firstCount int
+	var desired reconcile.DesiredState
 	if err := lab.withNetNS(func(ctx context.Context) error {
 		underlay, err := linkIdentity(lab.underlay, lab.netnsInode)
 		if err != nil {
 			return err
 		}
-		desired := baseDesired(underlay)
-		changed, err := base.EnsureBase(ctx, desired, actual)
-		if err != nil || !changed {
-			return fmt.Errorf("first base ensure: changed=%v err=%w", changed, err)
+		desired = baseDesired(underlay)
+		desired.Generation = 1
+		runtime := newFirstPassRuntime(t, elf, pinRoot, statePath, desired, underlay)
+		result, err := runtime.coordinator.FullReconcile(ctx)
+		if err != nil || result.State != reconcile.AgentReady || !result.Changed {
+			return fmt.Errorf("first full reconcile: result=%+v err=%w", result, err)
 		}
-		scanner, err := datapath.NewTCScanner(tc)
-		if err != nil {
-			return err
-		}
-		observed, err := scanner.Scan(ctx, []resolver.LinkIdentity{underlay})
+		observed, err := runtime.observer.Scan(ctx)
 		if err != nil {
 			return err
 		}
 		firstCount = len(observed.Attachments)
 		if firstCount != 2 {
-			return fmt.Errorf("expected two base filters, got %d", firstCount)
+			return fmt.Errorf("expected two coordinated base filters, got %d", firstCount)
 		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	pinScanner, err := datapath.NewPinScanner(pinRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	actualState, err := pinScanner.Scan(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	backend, err = datapath.NewLinuxTCBackend(pinRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tc, err = datapath.NewTCManager(backend)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base, err = controlplane.NewBaseEnsurer(tc)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := lab.withNetNS(func(ctx context.Context) error {
 		underlay, err := linkIdentity(lab.underlay, lab.netnsInode)
 		if err != nil {
 			return err
 		}
-		scanner, err := datapath.NewTCScanner(tc)
+		runtime := newFirstPassRuntime(t, elf, pinRoot, statePath, desired, underlay)
+		result, err := runtime.coordinator.FullReconcile(ctx)
+		if err != nil || result.State != reconcile.AgentReady || result.Changed {
+			return fmt.Errorf("restart full reconcile was not idempotent: result=%+v err=%w", result, err)
+		}
+		observed, err := runtime.observer.Scan(ctx)
 		if err != nil {
 			return err
 		}
-		before, err := scanner.Scan(ctx, []resolver.LinkIdentity{underlay})
-		if err != nil {
-			return err
-		}
-		actualState.Attachments = before.Attachments
-		changed, err := base.EnsureBase(ctx, baseDesired(underlay), actualState)
-		if err != nil || changed {
-			return fmt.Errorf("restart base ensure was not idempotent: changed=%v err=%w", changed, err)
-		}
-		after, err := scanner.Scan(ctx, []resolver.LinkIdentity{underlay})
-		if err != nil {
-			return err
-		}
-		if len(after.Attachments) != firstCount {
-			return fmt.Errorf("restart changed attachment count: before=%d after=%d", firstCount, len(after.Attachments))
+		if len(observed.Attachments) != firstCount {
+			return fmt.Errorf("restart changed attachment count: before=%d after=%d", firstCount, len(observed.Attachments))
 		}
 		return nil
 	}); err != nil {
@@ -139,7 +90,15 @@ func TestM2NetnsTCEnsureRestartAndConflict(t *testing.T) {
 	}
 
 	if err := lab.withNetNS(func(ctx context.Context) error {
-		link, err := linkIdentity(lab.vxlan, lab.netnsInode)
+		underlay, err := linkIdentity(lab.underlay, lab.netnsInode)
+		if err != nil {
+			return err
+		}
+		store, err := ownership.NewStore(statePath)
+		if err != nil {
+			return err
+		}
+		before, err := store.Load(ctx)
 		if err != nil {
 			return err
 		}
@@ -151,7 +110,7 @@ func TestM2NetnsTCEnsureRestartAndConflict(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if _, err := tc.EnsureClsact(ctx, link); err != nil {
+		if _, err := tc.EnsureClsact(ctx, underlay); err != nil {
 			return err
 		}
 		program, err := ebpf.LoadPinnedProgram(filepath.Join(pinRoot, "programs", "tc_init_e"), nil)
@@ -159,24 +118,36 @@ func TestM2NetnsTCEnsureRestartAndConflict(t *testing.T) {
 			return err
 		}
 		filter := &netlink.BpfFilter{
-			FilterAttrs: netlink.FilterAttrs{LinkIndex: link.IfIndex, Parent: netlink.HANDLE_MIN_EGRESS, Priority: 1000, Handle: 0x900, Protocol: unix.ETH_P_ALL},
+			FilterAttrs: netlink.FilterAttrs{LinkIndex: underlay.IfIndex, Parent: netlink.HANDLE_MIN_EGRESS, Priority: 1000, Handle: 0x900, Protocol: unix.ETH_P_ALL},
 			Fd:          program.FD(), Name: "external-m2", DirectAction: true,
 		}
 		if err := netlink.FilterAdd(filter); err != nil {
 			_ = program.Close()
 			return err
 		}
-		_ = program.Close()
-		base, err := controlplane.NewBaseEnsurer(tc)
+		if err := program.Close(); err != nil {
+			return err
+		}
+		runtime := newFirstPassRuntime(t, elf, pinRoot, statePath, desired, underlay)
+		result, err := runtime.coordinator.FullReconcile(ctx)
+		if err == nil || result.State != reconcile.AgentDisabled {
+			return fmt.Errorf("expected conflict to disable coordination: result=%+v err=%v", result, err)
+		}
+		enabled, err := readControlEnabled(pinRoot)
 		if err != nil {
 			return err
 		}
-		_, err = base.EnsureBase(ctx, baseDesired(link), actualState)
-		var classified *reconcile.ClassifiedError
-		if !errors.As(err, &classified) || classified.Class() != reconcile.ErrorConflict {
-			return fmt.Errorf("expected external TC conflict, got %v", err)
+		if enabled {
+			return fmt.Errorf("control Map remained enabled after conflict")
 		}
-		filters, err := tc.ListFilters(ctx, link)
+		after, err := store.Load(ctx)
+		if err != nil {
+			return err
+		}
+		if after.Generation != before.Generation || !after.LastCommittedAt.Equal(before.LastCommittedAt) {
+			return fmt.Errorf("ownership changed after conflict: before=%+v after=%+v", before, after)
+		}
+		filters, err := tc.ListFilters(ctx, underlay)
 		if err != nil {
 			return err
 		}
@@ -189,10 +160,208 @@ func TestM2NetnsTCEnsureRestartAndConflict(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type firstPassRuntime struct {
+	coordinator *reconcile.Coordinator
+	observer    *integrationObserver
+	tc          *datapath.TCManager
+}
+
+type integrationObserver struct {
+	desired reconcile.DesiredState
+	pins    *datapath.PinScanner
+	tc      *datapath.TCScanner
+	links   []resolver.LinkIdentity
+}
+
+func (o *integrationObserver) Discover(context.Context) (reconcile.DesiredState, error) {
+	return o.desired, nil
+}
+
+func (o *integrationObserver) Scan(ctx context.Context) (reconcile.ActualState, error) {
+	actual, err := o.pins.Scan(ctx)
+	if err != nil {
+		return reconcile.ActualState{}, err
+	}
+	tc, err := o.tc.Scan(ctx, o.links)
+	if err != nil {
+		return reconcile.ActualState{}, err
+	}
+	actual.Attachments = append(actual.Attachments, tc.Attachments...)
+	actual.Conflicts = append(actual.Conflicts, tc.Conflicts...)
+	actual.FlannelRule = reconcile.RuleState{Present: true, Identity: "m2-integration-marker", Fingerprint: "m2-integration"}
+	return actual, nil
+}
+
+type pinnedCollectionEnsurer struct {
+	elf     string
+	pinRoot string
+}
+
+func (e *pinnedCollectionEnsurer) EnsureCollection(ctx context.Context, _ reconcile.DesiredState, actual reconcile.ActualState) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if collectionReady(actual) {
+		return false, nil
+	}
+	file, err := os.Open(e.elf)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	manager, err := datapath.NewManager(e.pinRoot)
+	if err != nil {
+		return false, err
+	}
+	spec, err := manager.LoadCollection(file, datapath.V1Schema())
+	if err != nil {
+		return false, err
+	}
+	loaded, err := manager.LoadAndPin(spec, datapath.V1Schema())
+	if err != nil {
+		return false, err
+	}
 	if err := loaded.Close(); err != nil {
+		return false, err
+	}
+	if err := initializeControlMap(e.pinRoot); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func collectionReady(actual reconcile.ActualState) bool {
+	schema := datapath.V1Schema()
+	if len(actual.Programs) != len(schema.Programs) || len(actual.Maps) != len(schema.Maps) {
+		return false
+	}
+	for _, name := range schema.Programs {
+		if _, ok := actual.Programs[name]; !ok {
+			return false
+		}
+	}
+	for _, schema := range schema.Maps {
+		if _, ok := actual.Maps[schema.Name]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+type staticMarkerEnsurer struct{}
+
+func (staticMarkerEnsurer) EnsureMarker(context.Context, reconcile.DesiredState) (bool, error) {
+	return false, nil
+}
+
+type integrationControl struct {
+	writer  *datapath.ControlWriter
+	pinRoot string
+}
+
+func (c *integrationControl) Disable(ctx context.Context) error {
+	path := filepath.Join(c.pinRoot, "maps", "control_map")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return c.writer.Disable(ctx)
+}
+
+func (c *integrationControl) Publish(ctx context.Context, generation, heartbeatNS, heartbeatTimeoutNS uint64, flags uint32) error {
+	return c.writer.Publish(ctx, generation, heartbeatNS, heartbeatTimeoutNS, flags)
+}
+
+func newFirstPassRuntime(t *testing.T, elf, pinRoot, statePath string, desired reconcile.DesiredState, link resolver.LinkIdentity) *firstPassRuntime {
+	t.Helper()
+	backend, err := datapath.NewLinuxTCBackend(pinRoot)
+	if err != nil {
 		t.Fatal(err)
 	}
-	closed = true
+	tc, err := datapath.NewTCManager(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pins, err := datapath.NewPinScanner(pinRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcScanner, err := datapath.NewTCScanner(tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observer := &integrationObserver{desired: desired, pins: pins, tc: tcScanner, links: []resolver.LinkIdentity{link}}
+	controlWriter, err := datapath.NewControlWriter(pinRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := &integrationControl{writer: controlWriter, pinRoot: pinRoot}
+	base, err := controlplane.NewBaseEnsurer(tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := controlplane.NewEndpointEnsurer(tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapWriter, err := datapath.NewMapWriter(pinRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maps, err := controlplane.NewMapEnsurer(mapWriter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := ownership.NewStore(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := controlplane.NewPublisher(store, control, controlplane.PublishConfig{
+		InstallationID: "m2-integration", NodeUID: "node-b", ELFBuildID: "integration-elf",
+		HeartbeatNS: 1, HeartbeatTimeoutNS: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstPass, err := controlplane.NewFirstPassBackend(controlplane.FirstPassBackendConfig{
+		Observer: observer, Control: control, Collection: &pinnedCollectionEnsurer{elf: elf, pinRoot: pinRoot},
+		Marker: staticMarkerEnsurer{}, Base: base, Endpoint: endpoint, Maps: maps, Publisher: publisher,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := reconcile.NewCoordinator(firstPass)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &firstPassRuntime{coordinator: coordinator, observer: observer, tc: tc}
+}
+
+func initializeControlMap(pinRoot string) error {
+	control, err := ebpf.LoadPinnedMap(filepath.Join(pinRoot, "maps", "control_map"), nil)
+	if err != nil {
+		return err
+	}
+	value := datapath.ControlV1{ABIVersion: 1, HeartbeatTimeoutNS: 500}
+	if err := control.Update(uint32(0), &value, ebpf.UpdateAny); err != nil {
+		_ = control.Close()
+		return err
+	}
+	return control.Close()
+}
+
+func readControlEnabled(pinRoot string) (bool, error) {
+	control, err := ebpf.LoadPinnedMap(filepath.Join(pinRoot, "maps", "control_map"), nil)
+	if err != nil {
+		return false, err
+	}
+	var value datapath.ControlV1
+	err = control.Lookup(uint32(0), &value)
+	_ = control.Close()
+	return value.Enabled == 1, err
 }
 
 type netNSLab struct {
@@ -254,48 +423,6 @@ func newNetNSLab(t *testing.T) *netNSLab {
 func (l *netNSLab) withNetNS(fn func(context.Context) error) error {
 	manager := datapath.NewNetNSManager()
 	return manager.WithNetNS(context.Background(), datapath.NetNSRef{Path: l.path, Inode: l.netnsInode}, fn)
-}
-
-func loadPinnedCollection(t *testing.T, elf, pinRoot string) (*datapath.LoadedCollection, reconcile.ActualState) {
-	t.Helper()
-	file, err := os.Open(elf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	manager, err := datapath.NewManager(pinRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	spec, err := manager.LoadCollection(file, datapath.V1Schema())
-	if err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := manager.LoadAndPin(spec, datapath.V1Schema())
-	if err != nil {
-		t.Fatal(err)
-	}
-	control, err := ebpf.LoadPinnedMap(filepath.Join(pinRoot, "maps", "control_map"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	value := datapath.ControlV1{ABIVersion: 1, HeartbeatTimeoutNS: 500}
-	if err := control.Update(uint32(0), &value, ebpf.UpdateAny); err != nil {
-		control.Close()
-		t.Fatal(err)
-	}
-	if err := control.Close(); err != nil {
-		t.Fatal(err)
-	}
-	scanner, err := datapath.NewPinScanner(pinRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	actual, err := scanner.Scan(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return loaded, actual
 }
 
 func baseDesired(link resolver.LinkIdentity) reconcile.DesiredState {
