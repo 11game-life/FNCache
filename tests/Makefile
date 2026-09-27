@@ -1,4 +1,5 @@
 CC ?= gcc
+GO ?= go
 CFLAGS ?= -std=c11 -Wall -Wextra -Werror
 BUILD_DIR ?= /var/lib/oncache/build/FNCache/tests
 TARGET := $(BUILD_DIR)/abi-layout
@@ -47,7 +48,7 @@ $(INTEGRATION_BPF_OBJ):
 	$(MAKE) -C "$(BPF_DIR)" BUILD_DIR="$(INTEGRATION_BUILD_DIR)/bpf"
 
 test-m2-integration: $(INTEGRATION_BPF_OBJ)
-	$(RUN) env ONCACHE_M2_INTEGRATION=1 ONCACHE_BPF_ELF="$(abspath $(INTEGRATION_BPF_OBJ))" go test -tags=integration -count=1 ./tests/integration
+	$(RUN) env ONCACHE_M2_INTEGRATION=1 ONCACHE_BPF_ELF="$(abspath $(INTEGRATION_BPF_OBJ))" "$(GO)" test -tags=integration -count=1 ../tests/integration
 
 clean:
 	rm -f "$(TARGET)" "$(BEHAVIOR_TARGET)"

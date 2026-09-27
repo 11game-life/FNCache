@@ -65,7 +65,7 @@ struct {
 #define ENABLENP
 
 SEC("tc/egress")
-int tc_init_e_func(struct __sk_buff *skb) {
+int tc_init_e(struct __sk_buff *skb) {
     int err;
     void *data = (void *)(long)skb->data;
     void *data_end = (void *)(long)skb->data_end;
@@ -116,7 +116,7 @@ out:
 }
 
 SEC("tc/ingress")
-int tc_masq_func(struct __sk_buff *ctx) {
+int tc_masq(struct __sk_buff *ctx) {
     int action = TC_ACT_OK, err;
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
@@ -208,7 +208,7 @@ out:
 }
 
 SEC("tc/ingress")
-int tc_restore_func(struct __sk_buff *ctx) {
+int tc_restore(struct __sk_buff *ctx) {
     int action = TC_ACT_OK;
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
@@ -285,7 +285,7 @@ out:
 }
 
 SEC("tc/ingress")
-int tc_init_in_func(struct __sk_buff *ctx) {
+int tc_init_in(struct __sk_buff *ctx) {
     int action = TC_ACT_OK;
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;

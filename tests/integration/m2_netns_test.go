@@ -88,10 +88,6 @@ func TestM2NetnsTCEnsureRestartAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := loaded.Close(); err != nil {
-		t.Fatal(err)
-	}
-	closed = true
 	pinScanner, err := datapath.NewPinScanner(pinRoot)
 	if err != nil {
 		t.Fatal(err)
@@ -142,9 +138,6 @@ func TestM2NetnsTCEnsureRestartAndConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := addExternalFilter(lab); err != nil {
-		t.Fatal(err)
-	}
 	if err := lab.withNetNS(func(ctx context.Context) error {
 		link, err := linkIdentity(lab.vxlan, lab.netnsInode)
 		if err != nil {
@@ -158,6 +151,22 @@ func TestM2NetnsTCEnsureRestartAndConflict(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		if _, err := tc.EnsureClsact(ctx, link); err != nil {
+			return err
+		}
+		program, err := ebpf.LoadPinnedProgram(filepath.Join(pinRoot, "programs", "tc_init_e"), nil)
+		if err != nil {
+			return err
+		}
+		filter := &netlink.BpfFilter{
+			FilterAttrs: netlink.FilterAttrs{LinkIndex: link.IfIndex, Parent: netlink.HANDLE_MIN_EGRESS, Priority: 1000, Handle: 0x900, Protocol: unix.ETH_P_ALL},
+			Fd:          program.FD(), Name: "external-m2", DirectAction: true,
+		}
+		if err := netlink.FilterAdd(filter); err != nil {
+			_ = program.Close()
+			return err
+		}
+		_ = program.Close()
 		base, err := controlplane.NewBaseEnsurer(tc)
 		if err != nil {
 			return err
@@ -167,14 +176,23 @@ func TestM2NetnsTCEnsureRestartAndConflict(t *testing.T) {
 		if !errors.As(err, &classified) || classified.Class() != reconcile.ErrorConflict {
 			return fmt.Errorf("expected external TC conflict, got %v", err)
 		}
-		return nil
+		filters, err := tc.ListFilters(ctx, link)
+		if err != nil {
+			return err
+		}
+		for _, filter := range filters {
+			if filter.Handle == 0x900 {
+				return nil
+			}
+		}
+		return fmt.Errorf("external TC filter was not preserved")
 	}); err != nil {
 		t.Fatal(err)
 	}
-	output, err := runNetNSOutput(lab.name, "tc", "filter", "show", "dev", lab.vxlan, "egress")
-	if err != nil || (!strings.Contains(string(output), "0x900") && !strings.Contains(string(output), "2304")) {
-		t.Fatalf("external filter was not preserved: output=%q err=%v", output, err)
+	if err := loaded.Close(); err != nil {
+		t.Fatal(err)
 	}
+	closed = true
 }
 
 type netNSLab struct {
@@ -294,13 +312,6 @@ func linkIdentity(name string, netnsInode uint64) (resolver.LinkIdentity, error)
 		return resolver.LinkIdentity{}, fmt.Errorf("link identity is incomplete: %s", name)
 	}
 	return resolver.LinkIdentity{NetNSInode: netnsInode, IfIndex: attrs.Index, IfName: attrs.Name, MAC: append([]byte(nil), attrs.HardwareAddr...)}, nil
-}
-
-func addExternalFilter(lab *netNSLab) error {
-	if err := runNetNS(lab.name, "tc", "qdisc", "add", "dev", lab.vxlan, "clsact"); err != nil {
-		return err
-	}
-	return runNetNS(lab.name, "tc", "filter", "add", "dev", lab.vxlan, "egress", "protocol", "ip", "pref", "1000", "handle", "0x900", "flower", "dst_ip", "198.51.100.2", "action", "pass")
 }
 
 func requireIntegrationEnvironment(t *testing.T) {

@@ -62,8 +62,6 @@ struct rule {
 
 #define PORT_AVAILABLE 1024
 
-int verbose;
-
 #define EXIT_OK   0 /* == EXIT_SUCCESS (stdlib.h) man exit(3) */
 #define EXIT_FAIL  1 /* == EXIT_FAILURE (stdlib.h) man exit(3) */
 #define EXIT_FAIL_OPTION 2
