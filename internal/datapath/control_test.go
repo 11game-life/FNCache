@@ -80,6 +80,46 @@ func TestControlWriterDisablePreservesControlState(t *testing.T) {
 	}
 }
 
+func TestControlWriterInitializeDisablesAndResetsState(t *testing.T) {
+	fake := &fakeControlMap{value: ControlV1{ABIVersion: 1, Enabled: 1, Generation: 9, HeartbeatNS: 10, HeartbeatTimeoutNS: 20, Flags: 3, Reserved: 4}}
+	writer, err := newControlWriter(t.TempDir(), func(string) (controlMap, error) { return fake, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Initialize(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fake.updated != (ControlV1{ABIVersion: 1}) {
+		t.Fatalf("unexpected initialized control state: %+v", fake.updated)
+	}
+}
+
+func TestControlWriterInitializeRejectsIncompatibleOrFailedMap(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     ControlV1
+		lookupErr error
+		updateErr error
+		want      string
+	}{
+		{name: "ABI mismatch", value: ControlV1{ABIVersion: 2}, want: "ABI mismatch"},
+		{name: "lookup failure", lookupErr: errors.New("lookup failed"), want: "read control Map"},
+		{name: "update failure", updateErr: errors.New("update failed"), want: "initialize control Map"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fake := &fakeControlMap{value: test.value, lookupErr: test.lookupErr, updateErr: test.updateErr}
+			writer, err := newControlWriter(t.TempDir(), func(string) (controlMap, error) { return fake, nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Initialize(context.Background()); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("unexpected initialize error: %v", err)
+			}
+		})
+	}
+}
+
 func TestControlWriterDisableRejectsInvalidOrUnavailableMap(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -73,6 +73,34 @@ func (w *ControlWriter) Disable(ctx context.Context) error {
 	return nil
 }
 
+// Initialize creates a safe, disabled control value for a newly pinned Map or
+// resets a compatible value before the collection is wired into TC.
+func (w *ControlWriter) Initialize(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	path := filepath.Join(w.pinRoot, "maps", "control_map")
+	control, err := w.open(path)
+	if err != nil {
+		return fmt.Errorf("open control Map: %w", err)
+	}
+	defer func() { _ = control.Close() }()
+
+	key := uint32(0)
+	var current ControlV1
+	if err := control.Lookup(key, &current); err != nil {
+		return fmt.Errorf("read control Map: %w", err)
+	}
+	if current.ABIVersion != 0 && current.ABIVersion != controlMapABIVersion {
+		return fmt.Errorf("control Map ABI mismatch: got %d want %d", current.ABIVersion, controlMapABIVersion)
+	}
+	value := ControlV1{ABIVersion: controlMapABIVersion}
+	if err := control.Update(key, &value, ebpf.UpdateAny); err != nil {
+		return fmt.Errorf("initialize control Map: %w", err)
+	}
+	return nil
+}
+
 func (w *ControlWriter) Publish(ctx context.Context, generation, heartbeatNS, heartbeatTimeoutNS uint64, flags uint32) error {
 	if err := ctx.Err(); err != nil {
 		return err
