@@ -141,11 +141,14 @@ static int control(struct env *e, uint32_t enabled, uint32_t flags,
 }
 
 static struct bpf_program *program(struct env *e, const char *name) {
-    return bpf_object__find_program_by_name(e->obj, name);
+    struct bpf_program *prog = bpf_object__find_program_by_name(e->obj, name);
+    if (!prog) fprintf(stderr, "program not found: %s\n", name);
+    return prog;
 }
 
 static int run(struct bpf_program *prog, const uint8_t *packet, size_t len,
                uint32_t ifindex, uint8_t *output) {
+    if (!prog) return -1;
     struct __sk_buff ctx = {.ifindex = ifindex};
     struct bpf_test_run_opts opts = {
         .sz = sizeof(opts), .data_in = packet, .data_size_in = len,
@@ -160,8 +163,8 @@ static int run(struct bpf_program *prog, const uint8_t *packet, size_t len,
 
 static int all_programs(struct env *e, const uint8_t *packet, size_t len,
                         int expected, int unchanged) {
-    const char *names[] = {"tc_init_e_func", "tc_masq_func",
-                           "tc_restore_func", "tc_init_in_func"};
+    const char *names[] = {"tc_init_e", "tc_masq",
+                           "tc_restore", "tc_init_in"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
         uint8_t output[PACKET_MAX] = {};
         int ret = run(program(e, names[i]), packet, len, IF_IN, output);
@@ -197,7 +200,7 @@ static int malformed_tests(const char *path) {
     uint8_t packet[PACKET_MAX], output[PACKET_MAX];
     size_t len = vxlan_packet(packet, 0, IP_A, IP_B, IP_NODE);
     if (load_env(path, &e) || control(&e, 1, ONCACHE_CONTROL_FLAG_DEBUG_COUNTERS, 0, UINT64_MAX)) return 1;
-    const char *vxlan_programs[] = {"tc_init_e_func", "tc_restore_func"};
+    const char *vxlan_programs[] = {"tc_init_e", "tc_restore"};
     for (size_t p = 0; p < 2; p++) {
         for (size_t cut = 34; cut < len; cut += 7) {
             memcpy(output, packet, sizeof(output));
@@ -217,7 +220,7 @@ static int malformed_tests(const char *path) {
     for (size_t p = 0; p < 2; p++)
         if (run(program(&e, vxlan_programs[p]), packet, len, IF_IN, output) != TC_ACT_OK) return 1;
     len = plain_packet(packet, 0, IPPROTO_UDP, IP_A, IP_B);
-    const char *plain_programs[] = {"tc_masq_func", "tc_init_in_func"};
+    const char *plain_programs[] = {"tc_masq", "tc_init_in"};
     for (size_t p = 0; p < 2; p++) {
         for (size_t cut = 34; cut < len; cut += 7) {
             memcpy(output, packet, sizeof(output));
@@ -264,7 +267,7 @@ static int learn_hit_tests(const char *path) {
     uint8_t packet[PACKET_MAX], output[PACKET_MAX];
     size_t len = vxlan_packet(packet, 0x0c, IP_A, IP_B, IP_NODE);
     if (load_env(path, &e) || control(&e, 1, 0, 0, UINT64_MAX)) return 1;
-    if (run(program(&e, "tc_init_e_func"), packet, len, IF_IN, output) != TC_ACT_OK) return 1;
+    if (run(program(&e, "tc_init_e"), packet, len, IF_IN, output) != TC_ACT_OK) return 1;
     struct oncache_flow_v1 flow = {.local_addr = IP_A, .remote_addr = IP_B,
                                    .local_port = htons(1234), .remote_port = htons(4321),
                                    .protocol = IPPROTO_UDP};
@@ -283,12 +286,12 @@ static int learn_hit_tests(const char *path) {
     memset(ingress.src_mac, 0x66, sizeof(ingress.src_mac));
     uint32_t local = IP_A;
     if (bpf_map_update_elem(e.ingress, &local, &ingress, BPF_ANY) ||
-        run(program(&e, "tc_init_in_func"), packet, len, IF_IN, output) != TC_ACT_OK) {
+        run(program(&e, "tc_init_in"), packet, len, IF_IN, output) != TC_ACT_OK) {
         fprintf(stderr, "FAIL: ingress learning\n");
         return 1;
     }
     len = plain_packet(packet, 0xa0, IPPROTO_UDP, IP_A, IP_B);
-    if (run(program(&e, "tc_masq_func"), packet, len, IF_IN, output) != TC_ACT_OK ||
+    if (run(program(&e, "tc_masq"), packet, len, IF_IN, output) != TC_ACT_OK ||
         output[15] != 0xa4) {
         fprintf(stderr, "FAIL: miss TOS\n");
         return 1;
@@ -298,12 +301,12 @@ static int learn_hit_tests(const char *path) {
         return 1;
     }
     len = plain_packet(packet, 0xa0, IPPROTO_UDP, IP_A, IP_B);
-    if (run(program(&e, "tc_masq_func"), packet, len, IF_IN, output) != TC_ACT_REDIRECT) {
+    if (run(program(&e, "tc_masq"), packet, len, IF_IN, output) != TC_ACT_REDIRECT) {
         fprintf(stderr, "FAIL: masq hit\n");
         return 1;
     }
     len = vxlan_packet(packet, 0, IP_A, IP_B, IP_NODE);
-    int restore_ret = run(program(&e, "tc_restore_func"), packet, len, IF_IN, output);
+    int restore_ret = run(program(&e, "tc_restore"), packet, len, IF_IN, output);
     if (restore_ret != TC_ACT_REDIRECT) {
         fprintf(stderr, "FAIL: restore hit ret=%d\n", restore_ret);
         return 1;
@@ -336,7 +339,7 @@ static int ready_race(const char *path) {
     pthread_t threads[N];
     struct race_arg args[N];
     for (int i = 0; i < N; i++) {
-        args[i].prog = program(&e, i & 1 ? "tc_init_in_func" : "tc_init_e_func");
+        args[i].prog = program(&e, i & 1 ? "tc_init_in" : "tc_init_e");
         memcpy(args[i].packet, i & 1 ? ingress : egress, PACKET_MAX);
         args[i].len = i & 1 ? ilen : elen;
         args[i].ifindex = IF_IN;
@@ -361,7 +364,7 @@ static int fault_tests(const char *path, const char *kind) {
     uint8_t packet[PACKET_MAX], output[PACKET_MAX];
     size_t len = plain_packet(packet, 0, IPPROTO_UDP, IP_A, IP_B);
     if (load_env(path, &e) || control(&e, 1, 0, 0, UINT64_MAX) || seed_hit(&e, IF_IN)) return 1;
-    int ret = run(program(&e, "tc_masq_func"), packet, len, IF_IN, output);
+    int ret = run(program(&e, "tc_masq"), packet, len, IF_IN, output);
     int expected = !strcmp(kind, "adjust") ? TC_ACT_OK : TC_ACT_SHOT;
     int failed = check(ret == expected, kind);
     close_env(&e);
