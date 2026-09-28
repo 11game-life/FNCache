@@ -1,0 +1,86 @@
+package kube
+
+import (
+	"fmt"
+
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/tools/cache"
+
+	"github.com/cat-cc-Lcos/FNCache/internal/queue"
+)
+
+type EventDispatcher struct {
+	source     *InformerSource
+	classifier *EventClassifier
+	queue      *queue.Queue
+}
+
+func NewEventDispatcher(source *InformerSource, classifier *EventClassifier, target *queue.Queue) (*EventDispatcher, error) {
+	if source == nil || classifier == nil || target == nil {
+		return nil, fmt.Errorf("informer source, classifier and queue are required")
+	}
+	d := &EventDispatcher{source: source, classifier: classifier, queue: target}
+	if _, err := source.pods.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: d.addPod, UpdateFunc: d.updatePod, DeleteFunc: d.deletePod}); err != nil {
+		return nil, fmt.Errorf("register Pod dispatch handler: %w", err)
+	}
+	if _, err := source.nodes.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: d.addNode, UpdateFunc: d.updateNode, DeleteFunc: d.deleteNode}); err != nil {
+		return nil, fmt.Errorf("register Node dispatch handler: %w", err)
+	}
+	return d, nil
+}
+
+func (d *EventDispatcher) addPod(obj interface{})               { d.dispatchPod(nil, obj) }
+func (d *EventDispatcher) updatePod(oldObj, newObj interface{}) { d.dispatchPod(oldObj, newObj) }
+func (d *EventDispatcher) deletePod(obj interface{})            { d.dispatchPod(obj, nil) }
+
+func (d *EventDispatcher) dispatchPod(oldObj, newObj interface{}) {
+	oldPod, newPod, err := pairPods(oldObj, newObj)
+	if err != nil {
+		d.source.recordError(err)
+		return
+	}
+	for _, key := range d.classifier.Pod(oldPod, newPod) {
+		d.queue.Add(key)
+	}
+}
+
+func (d *EventDispatcher) addNode(obj interface{})               { d.dispatchNode(nil, obj) }
+func (d *EventDispatcher) updateNode(oldObj, newObj interface{}) { d.dispatchNode(oldObj, newObj) }
+func (d *EventDispatcher) deleteNode(obj interface{})            { d.dispatchNode(obj, nil) }
+
+func (d *EventDispatcher) dispatchNode(oldObj, newObj interface{}) {
+	oldNode, newNode, err := pairNodes(oldObj, newObj)
+	if err != nil {
+		d.source.recordError(err)
+		return
+	}
+	for _, key := range d.classifier.Node(oldNode, newNode) {
+		d.queue.Add(key)
+	}
+}
+
+func pairPods(oldObj, newObj interface{}) (oldPod, newPod *corev1.Pod, err error) {
+	if oldObj != nil {
+		oldPod, err = podObject(oldObj)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if newObj != nil {
+		newPod, err = podObject(newObj)
+	}
+	return oldPod, newPod, err
+}
+
+func pairNodes(oldObj, newObj interface{}) (oldNode, newNode *corev1.Node, err error) {
+	if oldObj != nil {
+		oldNode, err = nodeObject(oldObj)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if newObj != nil {
+		newNode, err = nodeObject(newObj)
+	}
+	return oldNode, newNode, err
+}
