@@ -75,6 +75,8 @@ make -C tests \
 涉及真实 netns、TC 或 VXLAN 的改动还应运行：
 
 ~~~bash
+BUILD_ROOT="$(mktemp -d /tmp/fncache-build.XXXXXX)"
+
 make -C tests \
   CC=gcc \
   CLANG=clang \
