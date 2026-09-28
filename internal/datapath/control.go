@@ -63,7 +63,9 @@ func (w *ControlWriter) Disable(ctx context.Context) error {
 	if err := control.Lookup(key, &value); err != nil {
 		return fmt.Errorf("read control Map: %w", err)
 	}
-	if err := validateControlValue(value); err != nil {
+	if value.ABIVersion == 0 {
+		value = ControlV1{ABIVersion: controlMapABIVersion}
+	} else if err := validateControlValue(value); err != nil {
 		return err
 	}
 	value.Enabled = 0
