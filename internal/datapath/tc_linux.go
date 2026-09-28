@@ -3,6 +3,7 @@
 package datapath
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path/filepath"
@@ -28,11 +29,11 @@ type kernelFilter struct {
 	FD             int
 }
 type tcNetlinkAPI interface {
-	listQdiscs(int) ([]kernelQdisc, error)
-	addQdisc(kernelQdisc) error
-	listFilters(int, uint32) ([]kernelFilter, error)
-	addFilter(kernelFilter) error
-	deleteFilter(kernelFilter) error
+	listQdiscs(context.Context, resolver.LinkIdentity) ([]kernelQdisc, error)
+	addQdisc(context.Context, resolver.LinkIdentity, kernelQdisc) error
+	listFilters(context.Context, resolver.LinkIdentity, uint32) ([]kernelFilter, error)
+	addFilter(context.Context, resolver.LinkIdentity, kernelFilter) error
+	deleteFilter(context.Context, resolver.LinkIdentity, kernelFilter) error
 }
 type tcProgram interface {
 	FD() int
@@ -67,7 +68,7 @@ func (b *linuxTCBackend) EnsureClsact(ctx context.Context, link resolver.LinkIde
 	if err := ctx.Err(); err != nil {
 		return TCQdiscState{}, err
 	}
-	qdiscs, err := b.api.listQdiscs(link.IfIndex)
+	qdiscs, err := b.api.listQdiscs(ctx, link)
 	if err != nil {
 		return TCQdiscState{}, fmt.Errorf("list qdiscs: %w", err)
 	}
@@ -75,8 +76,8 @@ func (b *linuxTCBackend) EnsureClsact(ctx context.Context, link resolver.LinkIde
 		return TCQdiscState{Link: link, Exists: true}, nil
 	}
 	qdisc := kernelQdisc{LinkIndex: link.IfIndex, Handle: netlink.MakeHandle(0xffff, 0), Parent: netlink.HANDLE_CLSACT, Kind: "clsact"}
-	if err := b.api.addQdisc(qdisc); err != nil {
-		qdiscs, listErr := b.api.listQdiscs(link.IfIndex)
+	if err := b.api.addQdisc(ctx, link, qdisc); err != nil {
+		qdiscs, listErr := b.api.listQdiscs(ctx, link)
 		if listErr == nil && hasClsact(qdiscs) {
 			return TCQdiscState{Link: link, Exists: true}, nil
 		}
@@ -99,7 +100,7 @@ func (b *linuxTCBackend) ListFilters(ctx context.Context, link resolver.LinkIden
 		{hook: HookIngress, parent: netlink.HANDLE_MIN_INGRESS},
 		{hook: HookEgress, parent: netlink.HANDLE_MIN_EGRESS},
 	} {
-		filters, err := b.api.listFilters(link.IfIndex, direction.parent)
+		filters, err := b.api.listFilters(ctx, link, direction.parent)
 		if err != nil {
 			return nil, fmt.Errorf("list %s filters: %w", direction.hook, err)
 		}
@@ -137,7 +138,7 @@ func (b *linuxTCBackend) AttachFilter(ctx context.Context, spec TCFilterSpec) (T
 		return TCFilterState{}, err
 	}
 	filter := kernelFilter{LinkIndex: spec.Link.IfIndex, Parent: parent, Priority: spec.Priority, Handle: spec.Handle, Kind: "bpf", Program: spec.Program, ProgramID: spec.ProgramID, DirectAction: spec.DirectAction, FD: program.FD()}
-	if err := b.api.addFilter(filter); err != nil {
+	if err := b.api.addFilter(ctx, spec.Link, filter); err != nil {
 		return TCFilterState{}, fmt.Errorf("add BPF filter: %w", err)
 	}
 	return TCFilterState{Link: spec.Link, Hook: spec.Hook, Program: spec.Program, ProgramID: spec.ProgramID, Priority: spec.Priority, Handle: spec.Handle, DirectAction: spec.DirectAction}, nil
@@ -154,7 +155,7 @@ func (b *linuxTCBackend) RemoveFilter(ctx context.Context, spec TCFilterSpec) er
 	if err != nil {
 		return err
 	}
-	if err := b.api.deleteFilter(kernelFilter{LinkIndex: spec.Link.IfIndex, Parent: parent, Priority: spec.Priority, Handle: spec.Handle, Kind: "bpf", Program: spec.Program, ProgramID: spec.ProgramID, FD: -1}); err != nil {
+	if err := b.api.deleteFilter(ctx, spec.Link, kernelFilter{LinkIndex: spec.Link.IfIndex, Parent: parent, Priority: spec.Priority, Handle: spec.Handle, Kind: "bpf", Program: spec.Program, ProgramID: spec.ProgramID, FD: -1}); err != nil {
 		return fmt.Errorf("delete BPF filter: %w", err)
 	}
 	return nil
@@ -182,63 +183,138 @@ func parentForHook(hook TCHook) (uint32, error) {
 
 type netlinkTCAPI struct{}
 
-func (netlinkTCAPI) listQdiscs(ifindex int) ([]kernelQdisc, error) {
-	link, err := netlink.LinkByIndex(ifindex)
-	if err != nil {
-		return nil, err
-	}
-	qdiscs, err := netlink.QdiscList(link)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]kernelQdisc, 0, len(qdiscs))
-	for _, qdisc := range qdiscs {
-		attrs := qdisc.Attrs()
-		if attrs != nil {
-			result = append(result, kernelQdisc{LinkIndex: attrs.LinkIndex, Handle: attrs.Handle, Parent: attrs.Parent, Kind: qdisc.Type()})
+func (netlinkTCAPI) listQdiscs(ctx context.Context, identity resolver.LinkIdentity) ([]kernelQdisc, error) {
+	var result []kernelQdisc
+	err := withNetlinkHandle(ctx, identity, func(handle *netlink.Handle) error {
+		link, err := lookupLink(handle, identity)
+		if err != nil {
+			return err
 		}
-	}
-	return result, nil
-}
-
-func (netlinkTCAPI) addQdisc(qdisc kernelQdisc) error {
-	return netlink.QdiscAdd(&netlink.Clsact{QdiscAttrs: netlink.QdiscAttrs{LinkIndex: qdisc.LinkIndex, Handle: qdisc.Handle, Parent: qdisc.Parent}})
-}
-
-func (netlinkTCAPI) listFilters(ifindex int, parent uint32) ([]kernelFilter, error) {
-	link, err := netlink.LinkByIndex(ifindex)
-	if err != nil {
-		return nil, err
-	}
-	filters, err := netlink.FilterList(link, parent)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]kernelFilter, 0, len(filters))
-	for _, filter := range filters {
-		attrs := filter.Attrs()
-		if attrs == nil {
-			continue
+		qdiscs, err := handle.QdiscList(link)
+		if err != nil {
+			return err
 		}
-		state := kernelFilter{LinkIndex: attrs.LinkIndex, Parent: attrs.Parent, Priority: attrs.Priority, Handle: attrs.Handle, Kind: filter.Type()}
-		if bpf, ok := filter.(*netlink.BpfFilter); ok {
-			state.Program = bpf.Name
-			if bpf.Id > 0 {
-				state.ProgramID = uint32(bpf.Id)
+		result = make([]kernelQdisc, 0, len(qdiscs))
+		for _, qdisc := range qdiscs {
+			attrs := qdisc.Attrs()
+			if attrs != nil {
+				result = append(result, kernelQdisc{LinkIndex: attrs.LinkIndex, Handle: attrs.Handle, Parent: attrs.Parent, Kind: qdisc.Type()})
 			}
-			state.DirectAction = bpf.DirectAction
 		}
-		result = append(result, state)
+		return nil
+	})
+	return result, err
+}
+
+func (netlinkTCAPI) addQdisc(ctx context.Context, identity resolver.LinkIdentity, qdisc kernelQdisc) error {
+	return withNetlinkHandle(ctx, identity, func(handle *netlink.Handle) error {
+		if _, err := lookupLink(handle, identity); err != nil {
+			return err
+		}
+		return handle.QdiscAdd(&netlink.Clsact{QdiscAttrs: netlink.QdiscAttrs{LinkIndex: qdisc.LinkIndex, Handle: qdisc.Handle, Parent: qdisc.Parent}})
+	})
+}
+
+func (netlinkTCAPI) listFilters(ctx context.Context, identity resolver.LinkIdentity, parent uint32) ([]kernelFilter, error) {
+	var result []kernelFilter
+	err := withNetlinkHandle(ctx, identity, func(handle *netlink.Handle) error {
+		link, err := lookupLink(handle, identity)
+		if err != nil {
+			return err
+		}
+		filters, err := handle.FilterList(link, parent)
+		if err != nil {
+			return err
+		}
+		result = make([]kernelFilter, 0, len(filters))
+		for _, filter := range filters {
+			attrs := filter.Attrs()
+			if attrs == nil {
+				continue
+			}
+			state := kernelFilter{LinkIndex: attrs.LinkIndex, Parent: attrs.Parent, Priority: attrs.Priority, Handle: attrs.Handle, Kind: filter.Type()}
+			if bpf, ok := filter.(*netlink.BpfFilter); ok {
+				state.Program = bpf.Name
+				if bpf.Id > 0 {
+					state.ProgramID = uint32(bpf.Id)
+				}
+				state.DirectAction = bpf.DirectAction
+			}
+			result = append(result, state)
+		}
+		return nil
+	})
+	return result, err
+}
+
+func (netlinkTCAPI) addFilter(ctx context.Context, identity resolver.LinkIdentity, filter kernelFilter) error {
+	return withNetlinkHandle(ctx, identity, func(handle *netlink.Handle) error {
+		if _, err := lookupLink(handle, identity); err != nil {
+			return err
+		}
+		return handle.FilterAdd(&netlink.BpfFilter{FilterAttrs: netlink.FilterAttrs{LinkIndex: filter.LinkIndex, Parent: filter.Parent, Priority: filter.Priority, Handle: filter.Handle, Protocol: unix.ETH_P_ALL}, Fd: filter.FD, Name: filter.Program, DirectAction: filter.DirectAction})
+	})
+}
+
+func (netlinkTCAPI) deleteFilter(ctx context.Context, identity resolver.LinkIdentity, filter kernelFilter) error {
+	return withNetlinkHandle(ctx, identity, func(handle *netlink.Handle) error {
+		if _, err := lookupLink(handle, identity); err != nil {
+			return err
+		}
+		return handle.FilterDel(&netlink.BpfFilter{FilterAttrs: netlink.FilterAttrs{LinkIndex: filter.LinkIndex, Parent: filter.Parent, Priority: filter.Priority, Handle: filter.Handle, Protocol: unix.ETH_P_ALL}, Fd: -1})
+	})
+}
+
+func withNetlinkHandle(ctx context.Context, identity resolver.LinkIdentity, fn func(*netlink.Handle) error) error {
+	if fn == nil {
+		return fmt.Errorf("netlink callback is required")
 	}
-	return result, nil
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	openAndRun := func(ctx context.Context) error {
+		handle, err := netlink.NewHandle(unix.NETLINK_ROUTE)
+		if err != nil {
+			return fmt.Errorf("open netlink handle: %w", err)
+		}
+		defer handle.Close()
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return fn(handle)
+	}
+	if identity.NetNSInode == 0 {
+		return openAndRun(ctx)
+	}
+	if identity.NetNSPath == "" {
+		return fmt.Errorf("target netns path is required for inode %d", identity.NetNSInode)
+	}
+	return NewNetNSManager().WithNetNS(ctx, NetNSRef{Path: identity.NetNSPath, Inode: identity.NetNSInode}, openAndRun)
 }
 
-func (netlinkTCAPI) addFilter(filter kernelFilter) error {
-	return netlink.FilterAdd(&netlink.BpfFilter{FilterAttrs: netlink.FilterAttrs{LinkIndex: filter.LinkIndex, Parent: filter.Parent, Priority: filter.Priority, Handle: filter.Handle, Protocol: unix.ETH_P_ALL}, Fd: filter.FD, Name: filter.Program, DirectAction: filter.DirectAction})
+func lookupLink(handle *netlink.Handle, identity resolver.LinkIdentity) (netlink.Link, error) {
+	link, err := handle.LinkByIndex(identity.IfIndex)
+	if err != nil {
+		return nil, err
+	}
+	attrs := link.Attrs()
+	if attrs == nil || attrs.Index != identity.IfIndex {
+		return nil, fmt.Errorf("TC link ifindex identity mismatch: got %d want %d", linkIndex(attrs), identity.IfIndex)
+	}
+	if identity.IfName != "" && attrs.Name != identity.IfName {
+		return nil, fmt.Errorf("TC link name identity mismatch: got %q want %q", attrs.Name, identity.IfName)
+	}
+	if len(identity.MAC) != 0 && !bytes.Equal(attrs.HardwareAddr, identity.MAC) {
+		return nil, fmt.Errorf("TC link MAC identity mismatch: got %s want %s", attrs.HardwareAddr, identity.MAC)
+	}
+	return link, nil
 }
 
-func (netlinkTCAPI) deleteFilter(filter kernelFilter) error {
-	return netlink.FilterDel(&netlink.BpfFilter{FilterAttrs: netlink.FilterAttrs{LinkIndex: filter.LinkIndex, Parent: filter.Parent, Priority: filter.Priority, Handle: filter.Handle, Protocol: unix.ETH_P_ALL}, Fd: -1})
+func linkIndex(attrs *netlink.LinkAttrs) int {
+	if attrs == nil {
+		return 0
+	}
+	return attrs.Index
 }
 
 type ebpfTCProgramLoader struct{}

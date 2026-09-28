@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
+	"github.com/cat-cc-Lcos/FNCache/internal/resolver"
 )
 
 func TestStoreCommitLoadRoundTrip(t *testing.T) {
@@ -34,6 +35,31 @@ func TestStoreCommitLoadRoundTrip(t *testing.T) {
 	entries, err := os.ReadDir(filepath.Dir(path))
 	if err != nil || len(entries) != 1 || entries[0].Name() != "state.json" {
 		t.Fatalf("temporary state file was not cleaned up: entries=%v err=%v", entries, err)
+	}
+}
+
+func TestStoreDoesNotPersistNetNSPath(t *testing.T) {
+	store, path := testStore(t)
+	state := testState()
+	state.Attachments = []reconcile.AttachmentState{{
+		Link: resolver.LinkIdentity{NetNSInode: 42, NetNSPath: "/proc/123/ns/net", IfIndex: 10, IfName: "eth0"},
+	}}
+	if err := store.Commit(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "NetNSPath") || strings.Contains(string(data), "/proc/123/ns/net") {
+		t.Fatalf("runtime netns path was persisted: %s", data)
+	}
+	loaded, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Attachments[0].Link.NetNSPath; got != "" {
+		t.Fatalf("runtime netns path was restored from ownership state: %q", got)
 	}
 }
 

@@ -4,6 +4,7 @@ package datapath
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/cat-cc-Lcos/FNCache/internal/resolver"
@@ -15,15 +16,15 @@ type fakeTCNetlinkAPI struct {
 	qdiscAdds, filterAdds, filterDeletes int
 }
 
-func (f *fakeTCNetlinkAPI) listQdiscs(int) ([]kernelQdisc, error) {
+func (f *fakeTCNetlinkAPI) listQdiscs(context.Context, resolver.LinkIdentity) ([]kernelQdisc, error) {
 	return append([]kernelQdisc(nil), f.qdiscs...), nil
 }
-func (f *fakeTCNetlinkAPI) addQdisc(qdisc kernelQdisc) error {
+func (f *fakeTCNetlinkAPI) addQdisc(_ context.Context, _ resolver.LinkIdentity, qdisc kernelQdisc) error {
 	f.qdiscAdds++
 	f.qdiscs = append(f.qdiscs, qdisc)
 	return nil
 }
-func (f *fakeTCNetlinkAPI) listFilters(_ int, parent uint32) ([]kernelFilter, error) {
+func (f *fakeTCNetlinkAPI) listFilters(_ context.Context, _ resolver.LinkIdentity, parent uint32) ([]kernelFilter, error) {
 	result := make([]kernelFilter, 0)
 	for _, filter := range f.filters {
 		if filter.Parent == parent {
@@ -32,11 +33,11 @@ func (f *fakeTCNetlinkAPI) listFilters(_ int, parent uint32) ([]kernelFilter, er
 	}
 	return result, nil
 }
-func (f *fakeTCNetlinkAPI) addFilter(filter kernelFilter) error {
+func (f *fakeTCNetlinkAPI) addFilter(_ context.Context, _ resolver.LinkIdentity, filter kernelFilter) error {
 	f.filters = append(f.filters, filter)
 	return nil
 }
-func (f *fakeTCNetlinkAPI) deleteFilter(filter kernelFilter) error {
+func (f *fakeTCNetlinkAPI) deleteFilter(_ context.Context, _ resolver.LinkIdentity, filter kernelFilter) error {
 	f.filterDeletes++
 	for i, current := range f.filters {
 		if current.Parent == filter.Parent && current.Priority == filter.Priority && current.Handle == filter.Handle {
@@ -83,6 +84,20 @@ func TestLinuxTCBackendCreatesAndReusesClsact(t *testing.T) {
 	second, err := backend.EnsureClsact(context.Background(), link)
 	if err != nil || second.CreatedByOncache || api.qdiscAdds != 1 {
 		t.Fatalf("clsact was not reused: state=%+v err=%v api=%+v", second, err, api)
+	}
+}
+
+func TestLinuxTCBackendRejectsTargetNamespaceWithoutPath(t *testing.T) {
+	backend, err := newLinuxTCBackend(t.TempDir(), netlinkTCAPI{}, &fakeTCProgramLoader{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = backend.EnsureClsact(context.Background(), resolver.LinkIdentity{NetNSInode: 9, IfIndex: 4})
+	if err == nil {
+		t.Fatal("target namespace without a path was accepted")
+	}
+	if got := err.Error(); !strings.Contains(got, "target netns path is required for inode 9") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
