@@ -94,6 +94,7 @@ type DesiredState struct {
 	Enabled         bool
 	Capability      discovery.CapabilityReport
 	Flannel         FlannelState
+	LocalPods       map[string]resolver.PodSnapshot
 	LocalEndpoints  map[string]resolver.Endpoint
 	RemoteEndpoints map[netip.Addr]RemoteEndpoint
 	Datapath        DatapathSpec
