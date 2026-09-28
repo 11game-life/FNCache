@@ -195,11 +195,13 @@ const (
 )
 
 const (
-	ReasonFlannelLinkMissing = "FLANNEL_LINK_MISSING"
-	ReasonBPFABIMismatch     = "BPF_ABI_MISMATCH"
-	ReasonTCForeignConflict  = "TC_FOREIGN_CONFLICT"
-	ReasonEndpointNotReady   = "ENDPOINT_NOT_READY"
-	ReasonNetNSRestoreFailed = "NETNS_RESTORE_FAILED"
+	ReasonFlannelLinkMissing    = "FLANNEL_LINK_MISSING"
+	ReasonBPFABIMismatch        = "BPF_ABI_MISMATCH"
+	ReasonTCForeignConflict     = "TC_FOREIGN_CONFLICT"
+	ReasonEndpointNotReady      = "ENDPOINT_NOT_READY"
+	ReasonNetNSRestoreFailed    = "NETNS_RESTORE_FAILED"
+	ReasonDatapathNotReady      = "DATAPATH_NOT_READY"
+	ReasonCapabilityUnsupported = "CAPABILITY_UNSUPPORTED"
 )
 
 type ClassifiedError struct {
