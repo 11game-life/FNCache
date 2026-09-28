@@ -273,7 +273,7 @@ func withNetlinkHandle(ctx context.Context, identity resolver.LinkIdentity, fn f
 		return err
 	}
 	openAndRun := func(ctx context.Context) error {
-		handle, err := netlink.NewHandle()
+		handle, err := netlink.NewHandle(unix.NETLINK_ROUTE)
 		if err != nil {
 			return fmt.Errorf("open netlink handle: %w", err)
 		}
