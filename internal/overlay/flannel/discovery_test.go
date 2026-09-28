@@ -27,6 +27,9 @@ func (f fixture) run(_ context.Context, name string, args ...string) ([]byte, er
 		if f.route == "" {
 			return []byte(`[]`), nil
 		}
+		if f.route == "pod-no-dev" {
+			return []byte(`[{"dst":"10.244.2.0/24"}]`), nil
+		}
 		return []byte(`[{"dst":"10.244.2.0/24","dev":"flannel.1"}]`), nil
 	default:
 		return nil, fmt.Errorf("unexpected arguments %s", command)
@@ -64,5 +67,12 @@ func TestDiscoverRejectsInvalidRuntimeIdentity(t *testing.T) {
 				t.Fatal("expected discovery validation error")
 			}
 		})
+	}
+}
+
+func TestDiscoverAcceptsFilteredRouteWithoutDeviceField(t *testing.T) {
+	d := NewDiscovery(fixture{kind: "vxlan", vni: 1, port: 8472, route: "pod-no-dev"}.run)
+	if _, err := d.Discover(context.Background(), DiscoveryRequest{}); err != nil {
+		t.Fatalf("filtered route without dev field was rejected: %v", err)
 	}
 }

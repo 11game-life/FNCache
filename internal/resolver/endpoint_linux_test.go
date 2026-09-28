@@ -54,7 +54,7 @@ func TestResolveEndpointBuildsStableLinkIdentity(t *testing.T) {
 	sandbox := &fakeSandboxResolver{infos: []SandboxInfo{endpointTestSandbox("sandbox-1"), endpointTestSandbox("sandbox-1")}}
 	probe := &fakeLinkProbe{peer: LinkIdentity{IfIndex: 10, IfName: "eth0"}, iflink: 20, host: LinkIdentity{IfIndex: 20, IfName: "vethweb"}}
 	endpoint, err := endpointTestResolver(sandbox, probe).Resolve(context.Background(), endpointTestPod())
-	if err != nil || endpoint.SandboxID != "sandbox-1" || endpoint.PeerLink.NetNSInode != 42 || endpoint.HostLink.IfIndex != 20 || endpoint.ObservedAt.Unix() != 10 {
+	if err != nil || endpoint.SandboxID != "sandbox-1" || endpoint.PeerLink.NetNSInode != 42 || endpoint.PeerLink.NetNSPath != "/proc/123/ns/net" || endpoint.HostLink.IfIndex != 20 || endpoint.ObservedAt.Unix() != 10 {
 		t.Fatalf("unexpected endpoint: endpoint=%+v err=%v", endpoint, err)
 	}
 }

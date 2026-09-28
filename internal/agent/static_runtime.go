@@ -84,7 +84,7 @@ func NewStaticRuntime(ctx context.Context, config StaticRuntimeConfig) (*StaticR
 	if err != nil {
 		return nil, err
 	}
-	tc, err := datapath.NewTCManager(tcBackend)
+	tc, err := datapath.NewTCManagerWithNetNS(tcBackend, netns)
 	if err != nil {
 		return nil, err
 	}
@@ -233,9 +233,12 @@ func validateStaticRuntimeConfig(config StaticRuntimeConfig) error {
 
 func mergeEndpointLinks(base []resolver.LinkIdentity, endpoints map[string]resolver.Endpoint) []resolver.LinkIdentity {
 	result := append([]resolver.LinkIdentity(nil), base...)
-	seen := make(map[[2]uint64]struct{}, len(result))
-	for _, link := range result {
-		seen[[2]uint64{link.NetNSInode, uint64(link.IfIndex)}] = struct{}{}
+	positions := make(map[[2]uint64]int, len(result))
+	for index, link := range result {
+		key := [2]uint64{link.NetNSInode, uint64(link.IfIndex)}
+		if _, ok := positions[key]; !ok {
+			positions[key] = index
+		}
 	}
 	uids := make([]string, 0, len(endpoints))
 	for uid := range endpoints {
@@ -246,10 +249,11 @@ func mergeEndpointLinks(base []resolver.LinkIdentity, endpoints map[string]resol
 		endpoint := endpoints[uid]
 		for _, link := range []resolver.LinkIdentity{endpoint.PeerLink, endpoint.HostLink} {
 			key := [2]uint64{link.NetNSInode, uint64(link.IfIndex)}
-			if _, ok := seen[key]; ok {
+			if index, ok := positions[key]; ok {
+				result[index] = link
 				continue
 			}
-			seen[key] = struct{}{}
+			positions[key] = len(result)
 			result = append(result, link)
 		}
 	}

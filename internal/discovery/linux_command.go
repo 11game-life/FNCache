@@ -30,7 +30,11 @@ func hasHelper(output []byte, helper string) bool {
 
 func hasDirectAction(output []byte) bool {
 	text := strings.ToLower(string(output))
-	return strings.Contains(text, "direct_action") || strings.Contains(text, "direct-action")
+	if strings.Contains(text, "direct_action") || strings.Contains(text, "direct-action") {
+		return true
+	}
+	return strings.Contains(text, "config_net_cls_act is set to y") &&
+		strings.Contains(text, "ebpf program_type sched_cls is available")
 }
 
 func validRouteOutput(output []byte) bool {
@@ -40,6 +44,9 @@ func validRouteOutput(output []byte) bool {
 
 func hasReservedTOSConflict(output []byte) bool {
 	for _, line := range strings.Split(strings.ToLower(string(output)), "\n") {
+		if isOncacheMarkerRule(line) {
+			continue
+		}
 		if !strings.Contains(line, "set-tos") && !strings.Contains(line, "set-dscp") && !strings.Contains(line, "set-xmark") {
 			continue
 		}
@@ -48,6 +55,14 @@ func hasReservedTOSConflict(output []byte) bool {
 		}
 	}
 	return false
+}
+
+func isOncacheMarkerRule(line string) bool {
+	normalized := strings.Join(strings.Fields(line), " ")
+	return strings.HasPrefix(normalized, "-a oncache ") &&
+		strings.Contains(normalized, "-m comment --comment \"oncache:") &&
+		strings.Contains(normalized, "--tos 0x04/0x04") &&
+		strings.Contains(normalized, "--set-tos 0x08/0x08")
 }
 
 func hasFixedTCConflict(output []byte) bool {

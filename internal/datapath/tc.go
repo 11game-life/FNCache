@@ -51,6 +51,7 @@ type TCBackend interface {
 
 type TCManager struct {
 	backend TCBackend
+	netns   *NetNSManager
 }
 
 type fixedAttachment struct {
@@ -70,6 +71,16 @@ func NewTCManager(backend TCBackend) (*TCManager, error) {
 		return nil, fmt.Errorf("TC backend is required")
 	}
 	return &TCManager{backend: backend}, nil
+}
+
+func NewTCManagerWithNetNS(backend TCBackend, netns *NetNSManager) (*TCManager, error) {
+	if backend == nil {
+		return nil, fmt.Errorf("TC backend is required")
+	}
+	if netns == nil {
+		return nil, fmt.Errorf("netns manager is required")
+	}
+	return &TCManager{backend: backend, netns: netns}, nil
 }
 
 func NewFixedFilter(link resolver.LinkIdentity, program string, programID uint32, directAction bool) (TCFilterSpec, error) {
@@ -99,7 +110,13 @@ func (m *TCManager) EnsureClsact(ctx context.Context, link resolver.LinkIdentity
 	if err := ctx.Err(); err != nil {
 		return TCQdiscState{}, err
 	}
-	return m.backend.EnsureClsact(ctx, link)
+	var result TCQdiscState
+	err := m.withLinkNetNS(ctx, link, func(ctx context.Context) error {
+		var err error
+		result, err = m.backend.EnsureClsact(ctx, link)
+		return err
+	})
+	return result, err
 }
 
 func (m *TCManager) EnsureFilter(ctx context.Context, spec TCFilterSpec) (TCFilterState, error) {
@@ -109,39 +126,44 @@ func (m *TCManager) EnsureFilter(ctx context.Context, spec TCFilterSpec) (TCFilt
 	if err := ctx.Err(); err != nil {
 		return TCFilterState{}, err
 	}
-	qdisc, err := m.EnsureClsact(ctx, spec.Link)
-	if err != nil {
-		return TCFilterState{}, err
-	}
-	if !qdisc.Exists || !sameLink(qdisc.Link, spec.Link) {
-		return TCFilterState{}, safetyError("TC backend did not establish the requested clsact")
-	}
-	filters, err := m.backend.ListFilters(ctx, spec.Link)
-	if err != nil {
-		return TCFilterState{}, fmt.Errorf("list TC filters: %w", err)
-	}
-	for _, current := range filters {
-		if current.Hook != spec.Hook || current.Priority != spec.Priority {
-			continue
+	var result TCFilterState
+	err := m.withLinkNetNS(ctx, spec.Link, func(ctx context.Context) error {
+		qdisc, err := m.backend.EnsureClsact(ctx, spec.Link)
+		if err != nil {
+			return err
 		}
-		if current.Handle == spec.Handle {
-			if sameFilter(current, spec) {
-				return current, nil
+		if !qdisc.Exists || !sameLink(qdisc.Link, spec.Link) {
+			return safetyError("TC backend did not establish the requested clsact")
+		}
+		filters, err := m.backend.ListFilters(ctx, spec.Link)
+		if err != nil {
+			return fmt.Errorf("list TC filters: %w", err)
+		}
+		for _, current := range filters {
+			if current.Hook != spec.Hook || current.Priority != spec.Priority {
+				continue
 			}
-			return TCFilterState{}, foreignConflict("fixed TC handle is occupied by another filter")
+			if current.Handle == spec.Handle {
+				if sameFilter(current, spec) {
+					result = current
+					return nil
+				}
+				return foreignConflict("fixed TC handle is occupied by another filter")
+			}
+			if !isFixedAttachment(current) {
+				return foreignConflict("fixed TC priority is occupied by another filter")
+			}
 		}
-		if !isFixedAttachment(current) {
-			return TCFilterState{}, foreignConflict("fixed TC priority is occupied by another filter")
+		result, err = m.backend.AttachFilter(ctx, spec)
+		if err != nil {
+			return fmt.Errorf("attach TC filter: %w", err)
 		}
-	}
-	state, err := m.backend.AttachFilter(ctx, spec)
-	if err != nil {
-		return TCFilterState{}, fmt.Errorf("attach TC filter: %w", err)
-	}
-	if !sameFilter(state, spec) {
-		return TCFilterState{}, safetyError("TC backend returned an unexpected filter identity")
-	}
-	return state, nil
+		if !sameFilter(result, spec) {
+			return safetyError("TC backend returned an unexpected filter identity")
+		}
+		return nil
+	})
+	return result, err
 }
 
 func (m *TCManager) RemoveFilter(ctx context.Context, spec TCFilterSpec) error {
@@ -151,20 +173,22 @@ func (m *TCManager) RemoveFilter(ctx context.Context, spec TCFilterSpec) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	filters, err := m.backend.ListFilters(ctx, spec.Link)
-	if err != nil {
-		return fmt.Errorf("list TC filters: %w", err)
-	}
-	for _, current := range filters {
-		if current.Hook != spec.Hook || current.Priority != spec.Priority || current.Handle != spec.Handle {
-			continue
+	return m.withLinkNetNS(ctx, spec.Link, func(ctx context.Context) error {
+		filters, err := m.backend.ListFilters(ctx, spec.Link)
+		if err != nil {
+			return fmt.Errorf("list TC filters: %w", err)
 		}
-		if !sameFilter(current, spec) {
-			return foreignConflict("refusing to remove a filter with a different program identity")
+		for _, current := range filters {
+			if current.Hook != spec.Hook || current.Priority != spec.Priority || current.Handle != spec.Handle {
+				continue
+			}
+			if !sameFilter(current, spec) {
+				return foreignConflict("refusing to remove a filter with a different program identity")
+			}
+			return m.backend.RemoveFilter(ctx, spec)
 		}
-		return m.backend.RemoveFilter(ctx, spec)
-	}
-	return nil
+		return nil
+	})
 }
 
 func (m *TCManager) ListFilters(ctx context.Context, link resolver.LinkIdentity) ([]TCFilterState, error) {
@@ -174,7 +198,23 @@ func (m *TCManager) ListFilters(ctx context.Context, link resolver.LinkIdentity)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return m.backend.ListFilters(ctx, link)
+	var result []TCFilterState
+	err := m.withLinkNetNS(ctx, link, func(ctx context.Context) error {
+		var err error
+		result, err = m.backend.ListFilters(ctx, link)
+		return err
+	})
+	return result, err
+}
+
+func (m *TCManager) withLinkNetNS(ctx context.Context, link resolver.LinkIdentity, fn func(context.Context) error) error {
+	if m.netns == nil || link.NetNSInode == 0 {
+		return fn(ctx)
+	}
+	if link.NetNSPath == "" {
+		return fmt.Errorf("netns path is required for link %d/%d", link.IfIndex, link.NetNSInode)
+	}
+	return m.netns.WithNetNS(ctx, NetNSRef{Path: link.NetNSPath, Inode: link.NetNSInode}, fn)
 }
 
 func validateFilterSpec(spec TCFilterSpec) error {

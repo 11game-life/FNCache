@@ -52,6 +52,17 @@ func TestResolveSandboxReturnsNetNSIdentity(t *testing.T) {
 	}
 }
 
+func TestResolveSandboxAcceptsNestedRuntimeInfo(t *testing.T) {
+	sandbox := testSandbox(runtimeapi.PodSandboxState_SANDBOX_READY)
+	client := &fakeCRIClient{listResponse: &runtimeapi.ListPodSandboxResponse{Items: []*runtimeapi.PodSandbox{sandbox}}, statusResponse: map[string]*runtimeapi.PodSandboxStatusResponse{
+		"sandbox-1": {Status: &runtimeapi.PodSandboxStatus{Id: "sandbox-1", State: runtimeapi.PodSandboxState_SANDBOX_READY, Metadata: sandbox.Metadata}, Info: map[string]string{"info": `{"pid":123}`}},
+	}}
+	info, err := testResolver(client).ResolveSandbox(context.Background(), testPod())
+	if err != nil || info.PID != 123 {
+		t.Fatalf("nested runtime info was not decoded: info=%+v err=%v", info, err)
+	}
+}
+
 func TestResolveSandboxRejectsMissingOrStaleSandbox(t *testing.T) {
 	client := &fakeCRIClient{listResponse: &runtimeapi.ListPodSandboxResponse{Items: []*runtimeapi.PodSandbox{testSandbox(runtimeapi.PodSandboxState_SANDBOX_READY)}}}
 	client.listResponse.Items[0].Metadata.Uid = "other"

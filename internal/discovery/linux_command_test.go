@@ -7,6 +7,9 @@ func TestLinuxCommandParsers(t *testing.T) {
 	if !hasHelper(output, "bpf_map_lookup_elem") || hasHelper(output, "bpf_map_update_elem") || !hasDirectAction(output) {
 		t.Fatal("helper or direct-action parser returned an unexpected result")
 	}
+	if !hasDirectAction([]byte("CONFIG_NET_CLS_ACT is set to y\neBPF program_type sched_cls is available")) {
+		t.Fatal("kernel TC capability was not recognized as direct-action support")
+	}
 	if !validRouteOutput([]byte(`[{"dst":"default"}]`)) || validRouteOutput([]byte("[]")) {
 		t.Fatal("route parser returned an unexpected result")
 	}
@@ -24,5 +27,8 @@ func TestLinuxConflictParsers(t *testing.T) {
 	}
 	if hasReservedTOSConflict([]byte("-A ONCACHE -j ACCEPT")) || hasFixedTCConflict([]byte("[]")) {
 		t.Fatal("false conflict detected")
+	}
+	if hasReservedTOSConflict([]byte(`-A ONCACHE -m comment --comment "oncache:m2-local" -m conntrack --ctstate ESTABLISHED -m tos --tos 0x04/0x04 -j TOS --set-tos 0x08/0x08`)) {
+		t.Fatal("canonical ONCache marker was treated as a TOS conflict")
 	}
 }

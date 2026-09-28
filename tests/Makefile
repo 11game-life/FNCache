@@ -1,5 +1,5 @@
 CC ?= gcc
-GO ?= go
+GO ?= $(or $(shell command -v go 2>/dev/null),/usr/local/go/bin/go)
 CFLAGS ?= -std=c11 -Wall -Wextra -Werror
 BUILD_DIR ?= /var/lib/oncache/build/FNCache/tests
 TARGET := $(BUILD_DIR)/abi-layout
@@ -14,7 +14,7 @@ REDIRECT_OBJ := $(BUILD_DIR)/bpf-fail-redirect/tc_prog_kern.o
 INTEGRATION_BUILD_DIR ?= $(BUILD_DIR)/m2-integration
 INTEGRATION_BPF_OBJ := $(INTEGRATION_BUILD_DIR)/bpf/tc_prog_kern.o
 
-.PHONY: all test test-bpf test-m2-integration clean
+.PHONY: all test test-bpf test-m2-integration test-m2-local-runtime clean
 
 all: $(TARGET)
 
@@ -49,6 +49,27 @@ $(INTEGRATION_BPF_OBJ):
 
 test-m2-integration: $(INTEGRATION_BPF_OBJ)
 	$(RUN) env ONCACHE_M2_INTEGRATION=1 ONCACHE_BPF_ELF="$(abspath $(INTEGRATION_BPF_OBJ))" "$(GO)" test -tags=integration -count=1 ../tests/integration
+
+M2_LOCAL_BUILD_DIR ?= $(BUILD_DIR)/m2-local-runtime
+M2_LOCAL_BIN := $(M2_LOCAL_BUILD_DIR)/oncache-agent
+M2_RUNTIME_MANIFEST ?=
+M2_RUNTIME_PIN_ROOT ?=
+M2_RUNTIME_STATE_PATH ?=
+M2_RUNTIME_MARKER_COMMENT ?=
+M2_RUNTIME_UNDERLAY_IFNAME ?=
+M2_RUNTIME_CLEANUP ?= 0
+
+$(M2_LOCAL_BIN):
+	@mkdir -p "$(M2_LOCAL_BUILD_DIR)"
+	$(GO) build -o "$@" ../cmd/oncache-agent
+
+test-m2-local-runtime: $(M2_LOCAL_BIN)
+	test -n "$(M2_RUNTIME_MANIFEST)"
+	test -n "$(M2_RUNTIME_PIN_ROOT)"
+	test -n "$(M2_RUNTIME_STATE_PATH)"
+	test -n "$(M2_RUNTIME_MARKER_COMMENT)"
+	test -n "$(M2_RUNTIME_UNDERLAY_IFNAME)"
+	$(RUN) env PATH="/opt/oncache/bin:/opt/oncache/sbin:/usr/local/go/bin:/usr/lib/llvm-18/bin:/usr/local/sbin:/usr/sbin:/sbin:$$PATH" ONCACHE_M2_LOCAL=1 ONCACHE_AGENT_BIN="$(abspath $(M2_LOCAL_BIN))" ONCACHE_STATIC_MANIFEST="$(abspath $(M2_RUNTIME_MANIFEST))" ONCACHE_M2_PIN_ROOT="$(M2_RUNTIME_PIN_ROOT)" ONCACHE_M2_STATE_PATH="$(M2_RUNTIME_STATE_PATH)" ONCACHE_M2_MARKER_COMMENT="$(M2_RUNTIME_MARKER_COMMENT)" ONCACHE_M2_UNDERLAY_IFNAME="$(M2_RUNTIME_UNDERLAY_IFNAME)" ONCACHE_M2_CLEANUP="$(M2_RUNTIME_CLEANUP)" "$(GO)" test -tags=integration -count=1 -run '^TestM2LocalStaticRuntime$$' ../tests/integration
 
 clean:
 	rm -f "$(TARGET)" "$(BEHAVIOR_TARGET)"

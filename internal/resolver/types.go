@@ -23,6 +23,7 @@ type LinkIdentity struct {
 	IfIndex    int
 	IfName     string
 	MAC        net.HardwareAddr
+	NetNSPath  string `json:"-"`
 }
 
 type Endpoint struct {

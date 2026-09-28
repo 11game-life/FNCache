@@ -173,3 +173,23 @@ func TestTCManagerStopsBeforeBackendOnCancellation(t *testing.T) {
 		t.Fatalf("expected cancellation before backend call: err=%v ensures=%d", err, backend.ensures)
 	}
 }
+
+func TestTCManagerUsesLinkNetNS(t *testing.T) {
+	link := testLink()
+	link.NetNSPath = "/proc/1/ns/net"
+	backend := &fakeTCBackend{qdisc: TCQdiscState{Link: link, Exists: true}}
+	manager, err := NewTCManagerWithNetNS(backend, newNetNSManager(&fakeNetnsOps{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := NewFixedFilter(link, "tc_init_e", 10, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.EnsureFilter(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	if backend.attached != 1 {
+		t.Fatalf("backend was not called in the target namespace: %+v", backend)
+	}
+}

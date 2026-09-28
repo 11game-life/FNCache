@@ -75,6 +75,7 @@ func (r *LinuxEndpointResolver) Resolve(ctx context.Context, pod PodSnapshot) (E
 		peer, hostIfIndex, err = r.links.PodEth0(ctx)
 		if err == nil {
 			peer.NetNSInode = first.NetNSInode
+			peer.NetNSPath = first.NetNSPath
 		}
 		return err
 	}); err != nil {
@@ -150,13 +151,16 @@ func (p linuxLinkProbe) PodEth0(ctx context.Context) (LinkIdentity, int, error) 
 	if attrs == nil || attrs.Index <= 0 {
 		return LinkIdentity{}, 0, fmt.Errorf("%w: Pod eth0 identity is incomplete", ErrUnsupported)
 	}
-	data, err := p.readFile(filepath.Join("/sys/class/net", attrs.Name, "iflink"))
-	if err != nil {
-		return LinkIdentity{}, 0, fmt.Errorf("%w: read eth0 iflink: %v", ErrEndpointNotReady, err)
-	}
-	iflink, err := parseIfLink(data)
-	if err != nil {
-		return LinkIdentity{}, 0, fmt.Errorf("%w: %v", ErrUnsupported, err)
+	iflink := attrs.ParentIndex
+	if iflink <= 0 {
+		data, err := p.readFile(filepath.Join("/sys/class/net", attrs.Name, "iflink"))
+		if err != nil {
+			return LinkIdentity{}, 0, fmt.Errorf("%w: read eth0 iflink: %v", ErrEndpointNotReady, err)
+		}
+		iflink, err = parseIfLink(data)
+		if err != nil {
+			return LinkIdentity{}, 0, fmt.Errorf("%w: %v", ErrUnsupported, err)
+		}
 	}
 	return LinkIdentity{IfIndex: attrs.Index, IfName: attrs.Name, MAC: cloneMAC(attrs.HardwareAddr)}, iflink, nil
 }

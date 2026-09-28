@@ -132,9 +132,31 @@ func parseSandboxPID(info map[string]string) (int, error) {
 	if !ok {
 		raw, ok = info["pid"]
 	}
+	if ok {
+		return parseSandboxPIDValue(raw)
+	}
+	raw, ok = info["info"]
 	if !ok {
 		return 0, fmt.Errorf("CRI status does not contain sandboxPid")
 	}
+	var nested struct {
+		SandboxPID int `json:"sandboxPid"`
+		PID        int `json:"pid"`
+	}
+	if err := json.Unmarshal([]byte(raw), &nested); err != nil {
+		return 0, fmt.Errorf("invalid nested CRI info: %w", err)
+	}
+	value := nested.SandboxPID
+	if value == 0 {
+		value = nested.PID
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("invalid sandboxPid %d", value)
+	}
+	return value, nil
+}
+
+func parseSandboxPIDValue(raw string) (int, error) {
 	raw = strings.Trim(strings.TrimSpace(raw), "\"")
 	var value int
 	if err := json.Unmarshal([]byte(raw), &value); err != nil {

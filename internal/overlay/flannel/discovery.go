@@ -156,7 +156,7 @@ func firstIPv4(groups []addrJSON) (netip.Addr, error) {
 
 func firstPodCIDR(routes []routeJSON, device string) (netip.Prefix, error) {
 	for _, route := range routes {
-		if route.Dev == device && route.Dst != "" && route.Dst != "default" {
+		if (route.Dev == "" || route.Dev == device) && route.Dst != "" && route.Dst != "default" {
 			prefix, err := netip.ParsePrefix(route.Dst)
 			if err == nil && prefix.Addr().Is4() {
 				return prefix, nil

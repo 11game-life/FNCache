@@ -41,6 +41,18 @@ func TestMergeEndpointLinksIsStableAndDeduplicated(t *testing.T) {
 	}
 }
 
+func TestMergeEndpointLinksRefreshesExistingIdentity(t *testing.T) {
+	base := []resolver.LinkIdentity{{NetNSInode: 42, IfIndex: 2, IfName: "eth0"}, {IfIndex: 5, IfName: "vethweb"}}
+	endpoint := resolver.Endpoint{
+		PeerLink: resolver.LinkIdentity{NetNSInode: 42, IfIndex: 2, IfName: "eth0", NetNSPath: "/proc/123/ns/net"},
+		HostLink: resolver.LinkIdentity{IfIndex: 5, IfName: "vethweb"},
+	}
+	links := mergeEndpointLinks(base, map[string]resolver.Endpoint{"pod-a": endpoint})
+	if len(links) != 2 || links[0].NetNSPath != "/proc/123/ns/net" {
+		t.Fatalf("existing endpoint identity was not refreshed: %+v", links)
+	}
+}
+
 func TestStaticRuntimeCloseIsIdempotent(t *testing.T) {
 	closer := &fakeCloser{err: errors.New("close failed")}
 	runtime := &StaticRuntime{cri: closer}
