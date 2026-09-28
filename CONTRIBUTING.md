@@ -1,21 +1,21 @@
 # Contributing to FNCache
 
-感谢参与 FNCache。项目目前处于实验性阶段，主要面向 Flannel VXLAN、containerd、IPv4 和 amd64 环境。贡献应优先保证基础网络连通性和安全旁路，再考虑性能收益。
+Thank you for contributing to FNCache. The project is experimental and primarily targets Flannel VXLAN, containerd, IPv4, and amd64 environments. Contributions should preserve basic network connectivity and safe fallback behavior before pursuing performance improvements.
 
-## 贡献流程
+## Contribution workflow
 
-1. 先搜索已有 Issue 和 PR，避免重复工作。
-2. Bug 或 Feature 先提交 Issue，明确问题、范围和验收方式。
-3. 从最新的 master 创建独立分支。
-4. 只实现当前 Issue 的目标，避免顺手重构或修复无关问题。
-5. 运行与改动相关的检查和测试。
-6. 使用 PR 模板提交，并在 Review 中根据反馈继续修改。
+1. Search existing Issues and pull requests to avoid duplicate work.
+2. Open an Issue for a bug or feature, describing its scope and acceptance criteria.
+3. Create an independent branch from the latest master.
+4. Implement only the current Issue goal. Do not include unrelated refactoring or fixes.
+5. Run checks and tests relevant to the change.
+6. Open a pull request using the repository template and respond to review feedback.
 
-一个 Issue 对应一个目标，一个 PR 对应一个独立分支。需要扩大范围时，应先更新 Issue 并重新确认方案。
+One Issue should represent one goal, and one pull request should use one dedicated branch. If the scope must expand, update the Issue and confirm the revised plan first.
 
-## 分支和 Commit
+## Branches and commits
 
-分支名使用简短的目的前缀，例如：
+Use a short purpose-based branch prefix, for example:
 
 ~~~text
 feat/<short-name>
@@ -24,7 +24,7 @@ docs/<short-name>
 test/<short-name>
 ~~~
 
-Commit 使用 Conventional Commits 风格：
+Use the Conventional Commits style:
 
 ~~~text
 feat(controlplane): add endpoint reconciliation
@@ -33,11 +33,11 @@ docs: add contribution guidelines
 test(integration): cover TC conflict recovery
 ~~~
 
-不要直接在 master 上开发，不要使用 force push，也不要把多个无关目标合并到同一个 PR。
+Do not develop directly on master, use force push, or combine unrelated goals in one pull request.
 
-## 提交前检查
+## Checks before submission
 
-Go 代码改动至少运行：
+Go changes should run at least:
 
 ~~~bash
 gofmt -l .
@@ -47,7 +47,7 @@ go test -race -covermode=atomic -coverprofile=coverage.out ./...
 go build ./...
 ~~~
 
-BPF、TC 或 ABI 改动还应在隔离的 Linux VM 中运行相关检查。下面的示例使用可写的临时构建目录，并显式传入构建工具参数：
+BPF, TC, or ABI changes should also run the relevant checks in an isolated Linux VM. The examples below use a writable temporary build directory and explicitly pass the build tools:
 
 ~~~bash
 BUILD_ROOT="$(mktemp -d /tmp/fncache-build.XXXXXX)"
@@ -72,7 +72,7 @@ make -C tests \
   test-bpf
 ~~~
 
-涉及真实 netns、TC 或 VXLAN 的改动还应运行：
+Changes involving real network namespaces, TC, or VXLAN should also run:
 
 ~~~bash
 BUILD_ROOT="$(mktemp -d /tmp/fncache-build.XXXXXX)"
@@ -86,24 +86,24 @@ make -C tests \
   test-m2-integration
 ~~~
 
-需要真实 netns、TC、VXLAN 或 bpffs 的测试不得直接在共享宿主机执行。此类测试应使用隔离 VM，并记录内核、工具链、Kubernetes/K3s、Flannel 和 containerd 版本。
+Tests requiring real network namespaces, TC, VXLAN, or bpffs must not run directly on a shared host. Use an isolated VM and record the kernel, toolchain, Kubernetes/K3s, Flannel, and containerd versions.
 
-## 特殊注意事项
+## Special considerations
 
-- 涉及 BPF ABI、Map、pin 路径、TC priority/handle、程序 ownership 或 heartbeat 时，必须在 PR 中说明影响。
-- 数据面异常必须保持 enabled=0 或回到 Flannel fallback，不能为了提高命中率猜测运行期网络状态。
-- 不得覆盖、删除或接管无法证明归 FNCache 所有的 TC、BPF、iptables 或 clsact 对象。
-- 配置、状态文件和诊断输出中不得提交凭据或敏感信息。
-- 保留工作区中与当前任务无关的已有修改，不要擅自 stash、reset、rebase 或清理。
+- Explain the impact of changes involving the BPF ABI, Maps, pin paths, TC priority/handles, program ownership, or heartbeat behavior.
+- If datapath state is uncertain, keep enabled=0 or fall back to Flannel. Do not guess runtime network state to improve the hit rate.
+- Do not overwrite, delete, or take ownership of TC, BPF, iptables, or clsact objects that cannot be proven to belong to FNCache.
+- Do not commit credentials or sensitive information in configuration, state files, or diagnostic output.
+- Preserve unrelated existing worktree changes. Do not run stash, reset, rebase, or cleanup commands without confirmation.
 
-## PR 要求
+## Pull request requirements
 
-PR 至少应说明：
+Every pull request should explain:
 
-- 解决的问题和关联 Issue；
-- 实际修改范围及未包含的内容；
-- 测试命令和结果；
-- 兼容性、风险和回滚方式；
-- 是否影响 BPF ABI、Map、TC ownership 或 fallback。
+- the problem being solved and the related Issue;
+- the actual change scope and what is intentionally excluded;
+- the test commands and results;
+- compatibility, risk, and rollback information;
+- whether the BPF ABI, Maps, TC ownership, or fallback behavior is affected.
 
-文档、测试和行为变化应在同一个 PR 中保持一致。未运行的测试必须明确说明原因。
+Keep documentation, tests, and behavior changes consistent within the same pull request. Clearly state why any test was not run.

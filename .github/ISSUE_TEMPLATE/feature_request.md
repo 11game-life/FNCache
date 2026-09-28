@@ -1,41 +1,41 @@
 ---
 name: Feature request
-about: 提议一个新的功能或改进
+about: Propose a new feature or improvement
 title: "[Feature] "
 labels: ""
 assignees: ""
 ---
 
-## 动机和问题
+## Motivation and problem
 
-<!-- 当前有什么问题？为什么需要这个功能？ -->
+<!-- What problem exists today, and why is this feature needed? -->
 
-## 使用场景
+## Use case
 
-<!-- 描述使用者、部署环境和典型工作流。 -->
+<!-- Describe the users, deployment environment, and typical workflow. -->
 
-## 建议行为
+## Proposed behavior
 
-<!-- 说明期望的用户可见行为。必要时给出示例。 -->
+<!-- Describe the expected user-visible behavior. Include an example when useful. -->
 
-## 范围和非目标
+## Scope and non-goals
 
-### 范围
-
--
-
-### 非目标
+### Scope
 
 -
 
-## 兼容性和安全性
+### Non-goals
 
-<!-- 说明对现有 Flannel fallback、BPF ABI、Map、TC ownership 和配置的影响。 -->
+-
 
-## 测试计划
+## Compatibility and safety
 
-<!-- 说明单元、BPF、Linux 特权集成或 E2E 测试计划。 -->
+<!-- Describe the impact on Flannel fallback, BPF ABI, Maps, TC ownership, and configuration. -->
 
-## 其他方案
+## Test plan
 
-<!-- 如果考虑过其他实现，请说明取舍。 -->
+<!-- Describe the planned unit, BPF, privileged Linux integration, or E2E tests. -->
+
+## Alternatives
+
+<!-- Describe other approaches considered and their trade-offs. -->

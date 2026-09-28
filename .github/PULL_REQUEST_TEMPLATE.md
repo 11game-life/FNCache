@@ -1,51 +1,51 @@
-## 变更摘要
+## Summary
 
-<!-- 简要说明这个 PR 解决了什么问题。 -->
+<!-- Briefly describe what this pull request solves. -->
 
-## 关联 Issue
+## Related Issue
 
 Closes #
 
-## 变更类型
+## Change type
 
-- [ ] Bug 修复
-- [ ] 新功能
-- [ ] 文档
-- [ ] 测试
-- [ ] CI / 构建
+- [ ] Bug fix
+- [ ] Feature
+- [ ] Documentation
+- [ ] Test
+- [ ] CI / Build
 
-## 设计和范围
+## Design and scope
 
-- 根因或动机：
-- 实际修改：
-- 明确未包含：
+- Root cause or motivation:
+- Actual changes:
+- Explicitly not included:
 
-## 测试
+## Testing
 
-请列出实际运行的命令和结果。未运行的测试请说明原因。
+List the commands actually run and their results. Explain why any test was not run.
 
 ~~~text
 go test -race ./...
 ~~~
 
-## eBPF / TC 检查
+## eBPF / TC checks
 
-如本 PR 涉及数据面，请确认：
+If this pull request touches the datapath, confirm:
 
-- [ ] 已说明 BPF ABI、Map 或 pin 路径影响
-- [ ] 已说明 TC priority、handle 和 program ownership 影响
-- [ ] 已验证异常时仍能安全 fallback 到 Flannel
-- [ ] 已在隔离 Linux VM 中运行相关特权测试
+- [ ] BPF ABI, Map, or pin path impact is explained
+- [ ] TC priority, handle, and program ownership impact is explained
+- [ ] Safe fallback to Flannel has been verified for failure paths
+- [ ] Relevant privileged tests were run in an isolated Linux VM
 
-## 风险和回滚
+## Risk and rollback
 
-- 兼容性风险：
-- 运行期风险：
-- 回滚方式：
+- Compatibility risk:
+- Runtime risk:
+- Rollback procedure:
 
-## 提交前确认
+## Submission checklist
 
-- [ ] 本 PR 只解决一个目标
-- [ ] 没有包含无关重构、格式化或依赖升级
-- [ ] 已更新必要的测试或文档
-- [ ] 没有提交凭据、私有配置或敏感日志
+- [ ] This pull request addresses one goal
+- [ ] No unrelated refactoring, formatting, or dependency upgrades are included
+- [ ] Necessary tests or documentation have been updated
+- [ ] No credentials, private configuration, or sensitive logs are included

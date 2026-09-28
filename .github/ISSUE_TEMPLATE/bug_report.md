@@ -1,16 +1,16 @@
 ---
 name: Bug report
-about: 报告可复现的问题
+about: Report a reproducible problem
 title: "[Bug] "
 labels: ""
 assignees: ""
 ---
 
-## 问题摘要
+## Summary
 
-<!-- 用一句话描述问题。 -->
+<!-- Describe the problem in one sentence. -->
 
-## 版本和环境
+## Version and environment
 
 - Version / commit:
 - OS / kernel:
@@ -20,31 +20,31 @@ assignees: ""
 - containerd:
 - iptables backend:
 
-## 复现步骤
+## Steps to reproduce
 
 1.
 2.
 3.
 
-## 实际行为
+## Actual behavior
 
-<!-- 包括错误信息、异常转发、状态变化或数据面行为。 -->
+<!-- Include error messages, unexpected forwarding, state changes, or datapath behavior. -->
 
-## 预期行为
+## Expected behavior
 
-<!-- 说明正确结果以及 Flannel fallback 是否应保持可用。 -->
+<!-- Describe the expected result and whether Flannel fallback should remain available. -->
 
-## 诊断信息
+## Diagnostics
 
-<!-- 请删除敏感信息后粘贴日志或结果。适用时附上 bpftool、tc、Map/pin、ownership state 等信息。 -->
+<!-- Remove sensitive information before pasting logs or output. When relevant, include bpftool, tc, Map/pin, or ownership state information. -->
 
 ~~~text
 paste logs or diagnostic output here
 ~~~
 
-## 影响范围
+## Impact
 
-- [ ] 只影响 ONCache 加速
-- [ ] Flannel fallback 仍然正常
-- [ ] 影响基础网络连通性
-- [ ] 可能涉及安全或对象 ownership
+- [ ] Affects only ONCache acceleration
+- [ ] Flannel fallback remains functional
+- [ ] Affects basic network connectivity
+- [ ] May involve security or object ownership
