@@ -24,7 +24,7 @@ func TestEndpointEnsurerAttachesPodFilters(t *testing.T) {
 	if err != nil || !changed || len(backend.attached) != 2 {
 		t.Fatalf("unexpected endpoint ensure: changed=%v attached=%+v err=%v", changed, backend.attached, err)
 	}
-	if backend.attached[0].Program != "tc_init_in" || backend.attached[0].Link.IfIndex != endpoint.PeerLink.IfIndex || backend.attached[0].Handle != 0x201 ||
+	if backend.attached[0].Program != "tc_init_in" || backend.attached[0].Link.IfIndex != endpoint.PeerLink.IfIndex || backend.attached[0].Link.NetNSPath != endpoint.PeerLink.NetNSPath || backend.attached[0].Handle != 0x201 ||
 		backend.attached[1].Program != "tc_masq" || backend.attached[1].Link.IfIndex != endpoint.HostLink.IfIndex || backend.attached[1].Handle != 0x200 {
 		t.Fatalf("unexpected endpoint attachments: %+v", backend.attached)
 	}
@@ -73,7 +73,7 @@ func endpointEnsureTestEndpoint() resolver.Endpoint {
 	return resolver.Endpoint{
 		Pod:  resolver.PodIdentity{Namespace: "default", Name: "web", UID: "pod-a"},
 		Node: resolver.NodeIdentity{Name: "node-a"}, PodIPv4: netip.MustParseAddr("10.244.1.10"), NetNSInode: 42,
-		PeerLink: resolver.LinkIdentity{NetNSInode: 42, IfIndex: 10, IfName: "eth0"},
+		PeerLink: resolver.LinkIdentity{NetNSInode: 42, NetNSPath: "/proc/123/ns/net", IfIndex: 10, IfName: "eth0"},
 		HostLink: resolver.LinkIdentity{IfIndex: 20, IfName: "vethweb"},
 	}
 }

@@ -43,7 +43,7 @@ func TestM2NetnsTCEnsureRestartAndConflict(t *testing.T) {
 	var firstCount int
 	var desired reconcile.DesiredState
 	if err := lab.withNetNS(func(ctx context.Context) error {
-		underlay, err := linkIdentity(lab.underlay, lab.netnsInode)
+		underlay, err := linkIdentity(lab.underlay, lab.netnsInode, lab.path)
 		if err != nil {
 			return err
 		}
@@ -68,7 +68,7 @@ func TestM2NetnsTCEnsureRestartAndConflict(t *testing.T) {
 	}
 
 	if err := lab.withNetNS(func(ctx context.Context) error {
-		underlay, err := linkIdentity(lab.underlay, lab.netnsInode)
+		underlay, err := linkIdentity(lab.underlay, lab.netnsInode, lab.path)
 		if err != nil {
 			return err
 		}
@@ -90,7 +90,7 @@ func TestM2NetnsTCEnsureRestartAndConflict(t *testing.T) {
 	}
 
 	if err := lab.withNetNS(func(ctx context.Context) error {
-		underlay, err := linkIdentity(lab.underlay, lab.netnsInode)
+		underlay, err := linkIdentity(lab.underlay, lab.netnsInode, lab.path)
 		if err != nil {
 			return err
 		}
@@ -159,6 +159,113 @@ func TestM2NetnsTCEnsureRestartAndConflict(t *testing.T) {
 		return fmt.Errorf("external TC filter was not preserved")
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTCBackendTargetsPodNetns(t *testing.T) {
+	requireIntegrationEnvironment(t)
+	elf := os.Getenv("ONCACHE_BPF_ELF")
+	if elf == "" {
+		t.Fatal("ONCACHE_BPF_ELF is required")
+	}
+	if _, err := os.Stat(elf); err != nil {
+		t.Fatalf("BPF ELF is unavailable: %v", err)
+	}
+
+	lab := newNetNSLab(t)
+	pinRoot := filepath.Join("/sys/fs/bpf/oncache", fmt.Sprintf("tc-netns-integration-%d", os.Getpid()))
+	if _, err := os.Stat(pinRoot); err == nil {
+		t.Fatalf("integration pin root already exists: %s", pinRoot)
+	}
+	defer os.RemoveAll(pinRoot)
+
+	before := currentNetNSInode(t)
+	var podLink resolver.LinkIdentity
+	if err := lab.withNetNS(func(context.Context) error {
+		var err error
+		podLink, err = linkIdentity(lab.underlay, lab.netnsInode, lab.path)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := currentNetNSInode(t); got != before {
+		t.Fatalf("namespace changed while resolving Pod link: got %d want %d", got, before)
+	}
+
+	collection := &pinnedCollectionEnsurer{elf: elf, pinRoot: pinRoot}
+	if _, err := collection.EnsureCollection(context.Background(), reconcile.DesiredState{}, reconcile.ActualState{}); err != nil {
+		t.Fatalf("pin BPF collection: %v", err)
+	}
+	pins, err := datapath.NewPinScanner(pinRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := pins.Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, ok := actual.Programs["tc_init_in"]
+	if !ok || program.ID == 0 {
+		t.Fatalf("tc_init_in program is unavailable: %+v", actual.Programs)
+	}
+
+	backend, err := datapath.NewLinuxTCBackend(pinRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc, err := datapath.NewTCManager(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := datapath.NewFixedFilter(podLink, "tc_init_in", program.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tc.EnsureFilter(context.Background(), spec); err != nil {
+		t.Fatalf("attach tc_init_in in Pod netns: %v", err)
+	}
+	if got := currentNetNSInode(t); got != before {
+		t.Fatalf("namespace was not restored after TC operation: got %d want %d", got, before)
+	}
+
+	if err := lab.withNetNS(func(context.Context) error {
+		link, err := netlink.LinkByName(lab.underlay)
+		if err != nil {
+			return err
+		}
+		filters, err := netlink.FilterList(link, netlink.HANDLE_MIN_INGRESS)
+		if err != nil {
+			return err
+		}
+		for _, filter := range filters {
+			attrs := filter.Attrs()
+			if attrs == nil || attrs.Handle != 0x201 {
+				continue
+			}
+			bpf, ok := filter.(*netlink.BpfFilter)
+			if !ok || bpf.Name != "tc_init_in" {
+				return fmt.Errorf("unexpected Pod ingress filter: %T/%q", filter, bpfName(filter))
+			}
+			return nil
+		}
+		return fmt.Errorf("tc_init_in was not attached in Pod netns")
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	hostLink, err := netlink.LinkByName(lab.hostLink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostFilters, err := netlink.FilterList(hostLink, netlink.HANDLE_MIN_INGRESS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, filter := range hostFilters {
+		attrs := filter.Attrs()
+		if attrs != nil && attrs.Handle == 0x201 {
+			t.Fatalf("tc_init_in was attached to host veth instead of Pod eth0")
+		}
 	}
 }
 
@@ -429,7 +536,7 @@ func baseDesired(link resolver.LinkIdentity) reconcile.DesiredState {
 	return reconcile.DesiredState{Enabled: true, Flannel: reconcile.FlannelState{UnderlayLink: link, UnderlayIPv4: netip.MustParseAddr("192.0.2.2")}}
 }
 
-func linkIdentity(name string, netnsInode uint64) (resolver.LinkIdentity, error) {
+func linkIdentity(name string, netnsInode uint64, netnsPath string) (resolver.LinkIdentity, error) {
 	link, err := netlink.LinkByName(name)
 	if err != nil {
 		return resolver.LinkIdentity{}, err
@@ -438,7 +545,23 @@ func linkIdentity(name string, netnsInode uint64) (resolver.LinkIdentity, error)
 	if attrs == nil || attrs.Index <= 0 {
 		return resolver.LinkIdentity{}, fmt.Errorf("link identity is incomplete: %s", name)
 	}
-	return resolver.LinkIdentity{NetNSInode: netnsInode, IfIndex: attrs.Index, IfName: attrs.Name, MAC: append([]byte(nil), attrs.HardwareAddr...)}, nil
+	return resolver.LinkIdentity{NetNSInode: netnsInode, NetNSPath: netnsPath, IfIndex: attrs.Index, IfName: attrs.Name, MAC: append([]byte(nil), attrs.HardwareAddr...)}, nil
+}
+
+func currentNetNSInode(t *testing.T) uint64 {
+	t.Helper()
+	var stat unix.Stat_t
+	if err := unix.Stat("/proc/self/ns/net", &stat); err != nil {
+		t.Fatal(err)
+	}
+	return uint64(stat.Ino)
+}
+
+func bpfName(filter netlink.Filter) string {
+	if bpf, ok := filter.(*netlink.BpfFilter); ok {
+		return bpf.Name
+	}
+	return ""
 }
 
 func requireIntegrationEnvironment(t *testing.T) {
