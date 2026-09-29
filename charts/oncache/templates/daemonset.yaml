@@ -48,10 +48,8 @@ spec:
                   fieldPath: spec.nodeName
             - name: ONCACHE_CONFIG
               value: /etc/oncache/agent.yaml
-            {{- with .Values.agent.installationID }}
             - name: ONCACHE_INSTALLATION_ID
-              value: {{ . | quote }}
-            {{- end }}
+              value: {{ default (include "oncache.fullname" .) .Values.agent.installationID | quote }}
           ports:
             - name: http
               containerPort: {{ .Values.metrics.port }}

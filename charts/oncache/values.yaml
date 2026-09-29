@@ -5,8 +5,11 @@ image:
 
 agent:
   enabled: true
-  command: []
-  args: []
+  command:
+    - /oncache-agent
+  args:
+    - -config
+    - /etc/oncache/agent.yaml
   installationID: ""
 
 config:
