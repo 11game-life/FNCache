@@ -1,0 +1,77 @@
+image:
+  repository: oncache-agent
+  tag: dev
+  pullPolicy: IfNotPresent
+
+agent:
+  enabled: true
+  command: []
+  args: []
+  installationID: ""
+
+config:
+  runtimeEndpoint: unix:///run/containerd/containerd.sock
+  pinRoot: /sys/fs/bpf/oncache/v1
+  stateDir: /var/lib/oncache/v1
+  overlay:
+    type: flannel-vxlan
+    device: auto
+  markers:
+    missMask: 0x04
+    establishedMask: 0x08
+  heartbeat:
+    interval: 1s
+    timeout: 5s
+  kube:
+    maxStaleness: 30s
+    resyncInterval: 30m
+  health:
+    interval: 5s
+  scan:
+    incrementalInterval: 30s
+    fullInterval: 5m
+  maps:
+    ingressCacheMaxEntries: 1024
+    egressIPCacheMaxEntries: 4096
+    egressCacheMaxEntries: 1024
+    policyCacheMaxEntries: 4096
+    devMapMaxEntries: 8
+  server:
+    listenAddress: :9090
+  features:
+    enabled: true
+    debugState: false
+
+rbac:
+  create: true
+  serviceAccountName: ""
+
+security:
+  privileged: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    add:
+      - BPF
+      - NET_ADMIN
+      - SYS_ADMIN
+
+hostPaths:
+  bpf: /sys/fs/bpf
+  run: /run
+  proc: /proc
+  state: /var/lib/oncache
+  flannel: /run/flannel
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+probes:
+  enabled: false
+  port: 9090
+
+metrics:
+  enabled: false
+  port: 9090
+  serviceType: ClusterIP

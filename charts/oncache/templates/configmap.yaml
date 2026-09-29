@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "oncache.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "oncache.labels" . | nindent 4 }}
+data:
+  agent.yaml: |
+    apiVersion: oncache.io/v1alpha1
+    kind: AgentConfiguration
+    nodeName: ""
+    runtimeEndpoint: {{ .Values.config.runtimeEndpoint | quote }}
+    pinRoot: {{ .Values.config.pinRoot | quote }}
+    stateDir: {{ .Values.config.stateDir | quote }}
+    overlay:
+      type: {{ .Values.config.overlay.type | quote }}
+      device: {{ .Values.config.overlay.device | quote }}
+    markers:
+      missMask: {{ .Values.config.markers.missMask | quote }}
+      establishedMask: {{ .Values.config.markers.establishedMask | quote }}
+    heartbeat:
+      interval: {{ .Values.config.heartbeat.interval | quote }}
+      timeout: {{ .Values.config.heartbeat.timeout | quote }}
+    kube:
+      maxStaleness: {{ .Values.config.kube.maxStaleness | quote }}
+      resyncInterval: {{ .Values.config.kube.resyncInterval | quote }}
+    health:
+      interval: {{ .Values.config.health.interval | quote }}
+    scan:
+      incrementalInterval: {{ .Values.config.scan.incrementalInterval | quote }}
+      fullInterval: {{ .Values.config.scan.fullInterval | quote }}
+    maps:
+      ingressCacheMaxEntries: {{ .Values.config.maps.ingressCacheMaxEntries }}
+      egressIPCacheMaxEntries: {{ .Values.config.maps.egressIPCacheMaxEntries }}
+      egressCacheMaxEntries: {{ .Values.config.maps.egressCacheMaxEntries }}
+      policyCacheMaxEntries: {{ .Values.config.maps.policyCacheMaxEntries }}
+      devMapMaxEntries: {{ .Values.config.maps.devMapMaxEntries }}
+    server:
+      listenAddress: {{ .Values.config.server.listenAddress | quote }}
+    features:
+      enabled: {{ .Values.config.features.enabled }}
+      debugState: {{ .Values.config.features.debugState }}
