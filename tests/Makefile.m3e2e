@@ -1,0 +1,23 @@
+# Included by tests/Makefile for the M3.15 two-node E2E workflow.
+M3_E2E_BUILD_DIR ?= $(BUILD_DIR)/m3-e2e-image
+M3_E2E_AGENT_BIN := $(M3_E2E_BUILD_DIR)/oncache-agent
+M3_E2E_BPF_OBJ := $(M3_E2E_BUILD_DIR)/tc_prog_kern.o
+M3_E2E_IMAGE ?= oncache-agent:m3-e2e
+M3_E2E_IMAGE_TOOL ?= docker
+
+$(M3_E2E_AGENT_BIN):
+	@mkdir -p "$(M3_E2E_BUILD_DIR)"
+	$(GO) build -o "$@" ../cmd/oncache-agent
+
+$(M3_E2E_BPF_OBJ):
+	$(MAKE) -C "$(BPF_DIR)" BUILD_DIR="$(M3_E2E_BUILD_DIR)/bpf"
+	cp "$(M3_E2E_BUILD_DIR)/bpf/tc_prog_kern.o" "$@"
+
+.PHONY: build-m3-e2e-image test-m3-e2e
+
+build-m3-e2e-image: $(M3_E2E_AGENT_BIN) $(M3_E2E_BPF_OBJ)
+	$(M3_E2E_IMAGE_TOOL) build -f e2e/Dockerfile -t "$(M3_E2E_IMAGE)" "$(M3_E2E_BUILD_DIR)"
+
+test-m3-e2e:
+	test -n "$(M3_E2E_IMAGE)"
+	ONCACHE_M3_E2E=1 ONCACHE_M3_E2E_IMAGE="$(M3_E2E_IMAGE)" $(GO) test -tags=m3e2e -count=1 ./e2e

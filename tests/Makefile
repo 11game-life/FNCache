@@ -84,3 +84,5 @@ helm-template:
 
 clean:
 	rm -f "$(TARGET)" "$(BEHAVIOR_TARGET)"
+
+-include Makefile.m3e2e
