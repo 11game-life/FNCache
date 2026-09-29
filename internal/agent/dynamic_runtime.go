@@ -3,25 +3,34 @@ package agent
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
 	"github.com/cat-cc-Lcos/FNCache/internal/config"
+	"github.com/cat-cc-Lcos/FNCache/internal/discovery"
 	"github.com/cat-cc-Lcos/FNCache/internal/kube"
+	"github.com/cat-cc-Lcos/FNCache/internal/overlay/flannel"
 	"github.com/cat-cc-Lcos/FNCache/internal/queue"
 	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
 )
 
 type DynamicRuntime struct {
-	store     *kube.SnapshotStore
-	source    *kube.InformerSource
-	bootstrap *KubeBootstrap
-	resync    *kube.ResyncScheduler
-	queue     *queue.Queue
-	barrier   *reconcile.CoordinationBarrier
+	config     config.AgentConfiguration
+	store      *kube.SnapshotStore
+	source     *kube.InformerSource
+	bootstrap  *KubeBootstrap
+	resync     *kube.ResyncScheduler
+	queue      *queue.Queue
+	barrier    *reconcile.CoordinationBarrier
+	factory    datapathComponentFactory
+	components *datapathComponents
+	observer   *DynamicObserver
 }
+
+type datapathComponentFactory func(context.Context, datapathComponentConfig) (*datapathComponents, error)
 
 func NewDynamicRuntime(configPath string) (*DynamicRuntime, error) {
 	cfg, err := config.Load(configPath)
@@ -40,10 +49,14 @@ func NewDynamicRuntime(configPath string) (*DynamicRuntime, error) {
 }
 
 func newDynamicRuntime(cfg config.AgentConfiguration, client kubernetes.Interface) (*DynamicRuntime, error) {
+	return newDynamicRuntimeWithFactory(cfg, client, newDatapathComponents)
+}
+
+func newDynamicRuntimeWithFactory(cfg config.AgentConfiguration, client kubernetes.Interface, factory datapathComponentFactory) (*DynamicRuntime, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if client == nil {
+	if client == nil || factory == nil {
 		return nil, fmt.Errorf("Kubernetes client is required")
 	}
 	store := kube.NewSnapshotStore()
@@ -71,17 +84,59 @@ func newDynamicRuntime(cfg config.AgentConfiguration, client kubernetes.Interfac
 	if err != nil {
 		return nil, err
 	}
-	return &DynamicRuntime{store: store, source: source, bootstrap: bootstrap, resync: resync, queue: target, barrier: reconcile.NewCoordinationBarrier()}, nil
+	return &DynamicRuntime{config: cfg, store: store, source: source, bootstrap: bootstrap, resync: resync, queue: target, barrier: reconcile.NewCoordinationBarrier(), factory: factory}, nil
 }
 
 func (r *DynamicRuntime) Run(ctx context.Context) error {
 	if err := r.bootstrap.Start(ctx); err != nil {
 		return err
 	}
+	if err := r.initializeDatapath(ctx); err != nil {
+		return err
+	}
 	go r.resync.Run(ctx)
 	<-ctx.Done()
 	r.queue.ShutDown()
+	if r.components != nil {
+		return r.components.Close()
+	}
 	return nil
 }
 
 func (r *DynamicRuntime) State() KubeBootstrapState { return r.bootstrap.State() }
+
+func (r *DynamicRuntime) initializeDatapath(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	snapshot, err := r.bootstrap.Snapshot()
+	if err != nil {
+		return err
+	}
+	node, ok := snapshot.Nodes[r.config.NodeName]
+	if !ok || node.Identity.UID == "" {
+		return fmt.Errorf("local Node %q is missing from Snapshot", r.config.NodeName)
+	}
+	heartbeat, err := monotonicNowNS()
+	if err != nil {
+		return fmt.Errorf("read monotonic clock: %w", err)
+	}
+	components, err := r.factory(ctx, datapathComponentConfig{
+		ELFPath: r.config.Datapath.ELFPath, PinRoot: r.config.PinRoot, StatePath: filepath.Join(r.config.StateDir, "state.json"),
+		InstallationID: r.config.InstallationID, ELFBuildID: r.config.Datapath.ELFBuildID, HeartbeatNS: heartbeat,
+		HeartbeatTimeoutNS: uint64(time.Duration(r.config.Heartbeat.Timeout)), Flags: 0,
+		Preflight: discovery.PreflightRequest{Node: node.Identity, PinRoot: r.config.PinRoot, StateDir: r.config.StateDir, RuntimeURI: r.config.RuntimeEndpoint, Overlay: r.config.Overlay.Type},
+		Flannel:   flannel.DiscoveryRequest{VXLANLinkName: r.config.Overlay.VXLANLinkName, UnderlayDevice: r.config.Overlay.Device, MissMask: r.config.Markers.MissMask, EstablishedMask: r.config.Markers.EstablishedMask, IPTablesBackend: "iptables-nft"},
+		Marker:    flannel.MarkerRuleSpec{Chain: r.config.Markers.Chain, Comment: r.config.Markers.Comment},
+	})
+	if err != nil {
+		return fmt.Errorf("create dynamic datapath components: %w", err)
+	}
+	observer, err := NewDynamicObserver(r.config, r.store, components.sources)
+	if err != nil {
+		_ = components.Close()
+		return err
+	}
+	r.components, r.observer = components, observer
+	return nil
+}

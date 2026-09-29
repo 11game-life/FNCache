@@ -5,9 +5,13 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/cat-cc-Lcos/FNCache/internal/config"
+	"github.com/cat-cc-Lcos/FNCache/internal/controlplane"
 )
 
 func dynamicTestConfig() config.AgentConfiguration {
@@ -22,7 +26,12 @@ func dynamicTestConfig() config.AgentConfiguration {
 }
 
 func TestDynamicRuntimeStartsKubernetesControlChain(t *testing.T) {
-	runtime, err := newDynamicRuntime(dynamicTestConfig(), fake.NewSimpleClientset())
+	sources := controlplane.Sources{Preflight: dynamicObserverPreflight{}, Flannel: dynamicObserverFlannel{}, Endpoints: dynamicObserverEndpoints{}, Pins: dynamicObserverPins{}, TC: dynamicObserverTC{}, Rules: dynamicObserverRules{}}
+	factory := func(context.Context, datapathComponentConfig) (*datapathComponents, error) {
+		return &datapathComponents{sources: sources}, nil
+	}
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: types.UID("node-a")}}
+	runtime, err := newDynamicRuntimeWithFactory(dynamicTestConfig(), fake.NewSimpleClientset(node), factory)
 	if err != nil {
 		t.Fatal(err)
 	}

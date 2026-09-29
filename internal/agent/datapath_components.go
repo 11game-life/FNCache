@@ -43,6 +43,15 @@ type datapathComponents struct {
 	publisher       *controlplane.Publisher
 }
 
+func (c *datapathComponents) Close() error {
+	if c == nil || c.cri == nil {
+		return nil
+	}
+	err := c.cri.Close()
+	c.cri = nil
+	return err
+}
+
 func newDatapathComponents(ctx context.Context, config datapathComponentConfig) (*datapathComponents, error) {
 	if err := validateDatapathComponentConfig(config); err != nil {
 		return nil, err
