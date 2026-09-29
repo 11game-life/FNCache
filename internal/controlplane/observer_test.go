@@ -140,6 +140,38 @@ func TestObserverScanMergesReadSideState(t *testing.T) {
 	}
 }
 
+func TestObserverRefreshesTCLinksAfterEndpointRediscovery(t *testing.T) {
+	endpoint := testEndpoint()
+	base := resolver.LinkIdentity{IfIndex: 2, IfName: "eth0"}
+	oldPeer := resolver.LinkIdentity{NetNSInode: 42, IfIndex: 11, IfName: "eth0"}
+	oldHost := resolver.LinkIdentity{IfIndex: 21, IfName: "veth-old"}
+	pins := &fakePins{}
+	tc := &fakeTC{}
+	rules := &fakeRules{}
+	endpoints := &fakeEndpoints{result: resolver.EndpointScanResult{
+		Endpoints: map[string]resolver.Endpoint{endpoint.Pod.UID: endpoint},
+	}}
+	sources := testSources(&fakePreflight{report: discovery.CapabilityReport{Supported: true}}, &fakeFlannel{config: testFlannelConfig()}, endpoints)
+	sources.Pins, sources.TC, sources.Rules = pins, tc, rules
+	input := testInput()
+	input.TCLinks = []resolver.LinkIdentity{base, oldPeer, oldHost}
+	input.BaseTCLinks = []resolver.LinkIdentity{base}
+	observer, err := NewObserver(sources, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := observer.Discover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := observer.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []resolver.LinkIdentity{base, endpoint.PeerLink, endpoint.HostLink}
+	if !reflect.DeepEqual(tc.links, want) {
+		t.Fatalf("observer retained stale endpoint links: got=%+v want=%+v", tc.links, want)
+	}
+}
+
 func TestObserverPropagatesScanError(t *testing.T) {
 	want := errors.New("pins unavailable")
 	sources := testSources(&fakePreflight{report: discovery.CapabilityReport{Supported: true}}, &fakeFlannel{config: testFlannelConfig()}, &fakeEndpoints{})
