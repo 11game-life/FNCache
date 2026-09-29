@@ -38,6 +38,19 @@ func BuildDesiredState(snapshot Snapshot, base reconcile.DesiredState, localNode
 		}
 		desired.LocalEndpoints[uid] = cloneEndpoint(endpoint)
 	}
+	for _, pod := range snapshot.Pods {
+		if pod.NodeName == "" || pod.NodeName == localNode || pod.HostNetwork || pod.Deleting || !pod.PodIPv4.IsValid() || !pod.PodIPv4.Is4() {
+			continue
+		}
+		node, ok := snapshot.Nodes[pod.NodeName]
+		if !ok || !node.InternalIPv4.IsValid() {
+			continue
+		}
+		if existing, ok := desired.RemoteEndpoints[pod.PodIPv4]; ok && existing.NodeIPv4 != node.InternalIPv4 {
+			return reconcile.DesiredState{}, fmt.Errorf("remote PodIP %s maps to multiple NodeIP addresses", pod.PodIPv4)
+		}
+		desired.RemoteEndpoints[pod.PodIPv4] = reconcile.RemoteEndpoint{PodIPv4: pod.PodIPv4, NodeIPv4: node.InternalIPv4}
+	}
 	return desired, nil
 }
 

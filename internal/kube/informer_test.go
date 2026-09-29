@@ -43,7 +43,7 @@ func TestInformerSourceSyncAndLifecycle(t *testing.T) {
 	if len(snapshot.Pods) != 1 || len(snapshot.Nodes) != 1 {
 		t.Fatalf("initial snapshot = %#v", snapshot)
 	}
-	if snapshot.Pods["pod-1"].PodIPv4 != netip.MustParseAddr("10.42.0.2") || snapshot.Nodes["node-a"].PodCIDR.String() != "10.42.0.0/24" {
+	if snapshot.Pods["pod-1"].PodIPv4 != netip.MustParseAddr("10.42.0.2") || snapshot.Nodes["node-a"].PodCIDR.String() != "10.42.0.0/24" || snapshot.Nodes["node-a"].InternalIPv4 != netip.MustParseAddr("192.0.2.10") {
 		t.Fatalf("initial object conversion failed: %#v", snapshot)
 	}
 

@@ -14,6 +14,7 @@ import (
 type NodeSnapshot struct {
 	Identity        resolver.NodeIdentity
 	PodCIDR         netip.Prefix
+	InternalIPv4    netip.Addr
 	Addresses       []netip.Addr
 	ResourceVersion string
 }
@@ -150,6 +151,9 @@ func validateNode(node NodeSnapshot) error {
 	}
 	if node.PodCIDR.IsValid() && !node.PodCIDR.Addr().Is4() {
 		return fmt.Errorf("node PodCIDR must use IPv4")
+	}
+	if node.InternalIPv4.IsValid() && !node.InternalIPv4.Is4() {
+		return fmt.Errorf("node InternalIP must use IPv4")
 	}
 	for _, address := range node.Addresses {
 		if address.IsValid() && !address.Is4() {

@@ -73,3 +73,38 @@ func TestBuildDesiredStateRejectsEndpointUIDMismatch(t *testing.T) {
 		t.Fatal("endpoint UID mismatch was accepted")
 	}
 }
+
+func TestBuildDesiredStateBuildsRemoteEndpoints(t *testing.T) {
+	remoteIP := netip.MustParseAddr("10.42.1.2")
+	nodeIP := netip.MustParseAddr("192.0.2.11")
+	snapshot := Snapshot{
+		Nodes: map[string]NodeSnapshot{
+			"node-a": {Identity: resolver.NodeIdentity{Name: "node-a", UID: "node-1"}},
+			"node-b": {Identity: resolver.NodeIdentity{Name: "node-b", UID: "node-2"}, InternalIPv4: nodeIP},
+		},
+		Pods: map[string]resolver.PodSnapshot{"pod-remote": desiredPod("pod-remote", "node-b", remoteIP)},
+	}
+	desired, err := BuildDesiredState(snapshot, reconcile.DesiredState{}, "node-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := desired.RemoteEndpoints[remoteIP]
+	if !ok || got.PodIPv4 != remoteIP || got.NodeIPv4 != nodeIP {
+		t.Fatalf("unexpected remote mapping: %#v", desired.RemoteEndpoints)
+	}
+}
+
+func TestBuildDesiredStateSkipsRemotePodWithoutNodeIP(t *testing.T) {
+	remoteIP := netip.MustParseAddr("10.42.1.2")
+	snapshot := Snapshot{
+		Nodes: map[string]NodeSnapshot{"node-a": {Identity: resolver.NodeIdentity{Name: "node-a", UID: "node-1"}}, "node-b": {Identity: resolver.NodeIdentity{Name: "node-b", UID: "node-2"}}},
+		Pods:  map[string]resolver.PodSnapshot{"pod-remote": desiredPod("pod-remote", "node-b", remoteIP)},
+	}
+	desired, err := BuildDesiredState(snapshot, reconcile.DesiredState{}, "node-a", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(desired.RemoteEndpoints) != 0 {
+		t.Fatalf("unready remote mapping was generated: %#v", desired.RemoteEndpoints)
+	}
+}

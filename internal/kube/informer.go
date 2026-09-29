@@ -224,6 +224,7 @@ func podSnapshot(pod *corev1.Pod) (resolver.PodSnapshot, error) {
 
 func nodeSnapshot(node *corev1.Node) (NodeSnapshot, error) {
 	var podCIDR netip.Prefix
+	var internalIPv4 netip.Addr
 	if node.Spec.PodCIDR != "" {
 		parsed, err := netip.ParsePrefix(node.Spec.PodCIDR)
 		if err != nil {
@@ -242,9 +243,15 @@ func nodeSnapshot(node *corev1.Node) (NodeSnapshot, error) {
 		}
 		if parsed.Is4() {
 			addresses = append(addresses, parsed)
+			if address.Type == corev1.NodeInternalIP {
+				if internalIPv4.IsValid() && internalIPv4 != parsed {
+					return NodeSnapshot{}, fmt.Errorf("Node has multiple IPv4 InternalIP addresses")
+				}
+				internalIPv4 = parsed
+			}
 		}
 	}
-	return NodeSnapshot{Identity: resolver.NodeIdentity{Name: node.Name, UID: string(node.UID)}, PodCIDR: podCIDR, Addresses: addresses, ResourceVersion: node.ResourceVersion}, nil
+	return NodeSnapshot{Identity: resolver.NodeIdentity{Name: node.Name, UID: string(node.UID)}, PodCIDR: podCIDR, InternalIPv4: internalIPv4, Addresses: addresses, ResourceVersion: node.ResourceVersion}, nil
 }
 
 func optionalIPv4(value, field string) (netip.Addr, error) {
