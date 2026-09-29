@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/cat-cc-Lcos/FNCache/internal/agent"
 	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
@@ -12,15 +14,32 @@ import (
 
 func main() {
 	manifest := flag.String("static-config", "", "path to a StaticRuntimeConfiguration manifest")
+	configPath := flag.String("config", "", "path to an AgentConfiguration for dynamic Kubernetes mode")
 	flag.Parse()
-	if *manifest == "" {
-		fmt.Fprintln(os.Stderr, "-static-config is required")
+	if (*manifest == "") == (*configPath == "") {
+		fmt.Fprintln(os.Stderr, "exactly one of -static-config or -config is required")
 		os.Exit(2)
 	}
-	if err := run(*manifest); err != nil {
+	var err error
+	if *manifest != "" {
+		err = run(*manifest)
+	} else {
+		err = runDynamic(*configPath)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func runDynamic(path string) error {
+	runtime, err := agent.NewDynamicRuntime(path)
+	if err != nil {
+		return fmt.Errorf("create dynamic runtime: %w", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runtime.Run(ctx)
 }
 
 func run(path string) (err error) {
