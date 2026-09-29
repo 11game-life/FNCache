@@ -13,9 +13,11 @@ type fakeMapHandle struct {
 	value       []byte
 	lookupErr   error
 	updateErr   error
+	deleteErr   error
 	updated     []byte
 	lookupCalls int
 	updateCalls int
+	deleted     [][]byte
 	closeCalls  int
 }
 
@@ -39,6 +41,25 @@ func (m *fakeMapHandle) Update(_, value any, _ ebpf.MapUpdateFlags) error {
 	m.updated = append([]byte(nil), data...)
 	m.value = append([]byte(nil), data...)
 	return nil
+}
+
+func (m *fakeMapHandle) Delete(key any) error {
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
+	data, ok := key.([]byte)
+	if !ok {
+		return errors.New("unexpected Map key")
+	}
+	m.deleted = append(m.deleted, append([]byte(nil), data...))
+	return nil
+}
+
+func (m *fakeMapHandle) ListKeys() ([][]byte, error) {
+	if m.value == nil {
+		return nil, nil
+	}
+	return [][]byte{append([]byte(nil), m.value...)}, nil
 }
 
 func (m *fakeMapHandle) Close() error {
@@ -100,5 +121,24 @@ func TestMapWriterEnsurePropagatesFailuresAndCancellation(t *testing.T) {
 	cancel()
 	if _, err := writer.Ensure(ctx, "devmap", []byte{1}, []byte{2}); !errors.Is(err, context.Canceled) || called {
 		t.Fatalf("cancellation was not honored: err=%v called=%v", err, called)
+	}
+}
+
+func TestMapWriterDeleteAndClearAreIdempotent(t *testing.T) {
+	handle := &fakeMapHandle{value: []byte{1, 2}}
+	writer, _ := newMapWriter(t.TempDir(), func(string) (mapHandle, error) { return handle, nil })
+	deleted, err := writer.Delete(context.Background(), "ingress_cache", []byte{1, 2})
+	if err != nil || !deleted || len(handle.deleted) != 1 {
+		t.Fatalf("Map key was not deleted: deleted=%v calls=%d err=%v", deleted, len(handle.deleted), err)
+	}
+	count, err := writer.Clear(context.Background(), "policy_cache")
+	if err != nil || count != 1 || len(handle.deleted) != 2 {
+		t.Fatalf("Map was not cleared: count=%d calls=%d err=%v", count, len(handle.deleted), err)
+	}
+	missing := &fakeMapHandle{deleteErr: ebpf.ErrKeyNotExist}
+	writer, _ = newMapWriter(t.TempDir(), func(string) (mapHandle, error) { return missing, nil })
+	deleted, err = writer.Delete(context.Background(), "ingress_cache", []byte{1})
+	if err != nil || deleted {
+		t.Fatalf("missing Map key was not idempotent: deleted=%v err=%v", deleted, err)
 	}
 }

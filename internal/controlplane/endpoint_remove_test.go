@@ -1,0 +1,84 @@
+package controlplane
+
+import (
+	"context"
+	"errors"
+	"net/netip"
+	"testing"
+
+	"github.com/cat-cc-Lcos/FNCache/internal/datapath"
+	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
+	"github.com/cat-cc-Lcos/FNCache/internal/resolver"
+)
+
+type fakeEndpointMaps struct{ calls []string }
+
+func (m *fakeEndpointMaps) Delete(_ context.Context, name string, _ []byte) (bool, error) {
+	m.calls = append(m.calls, "delete:"+name)
+	return true, nil
+}
+func (m *fakeEndpointMaps) Clear(_ context.Context, name string) (int, error) {
+	m.calls = append(m.calls, "clear:"+name)
+	return 2, nil
+}
+
+type fakeEndpointTC struct{ specs []datapath.TCFilterSpec }
+
+func (t *fakeEndpointTC) RemoveFilter(_ context.Context, spec datapath.TCFilterSpec) error {
+	t.specs = append(t.specs, spec)
+	return nil
+}
+
+func ownedEndpoint() reconcile.OwnedEndpoint {
+	return reconcile.OwnedEndpoint{PodUID: "pod-1", PodIPv4: netip.MustParseAddr("10.42.0.2"), NetNSInode: 42, PeerIfIndex: 7, HostIfIndex: 8}
+}
+
+func endpointAttachments() []reconcile.AttachmentState {
+	return []reconcile.AttachmentState{
+		{Link: resolver.LinkIdentity{NetNSInode: 42, IfIndex: 7, NetNSPath: "/proc/1/ns/net"}, Hook: string(datapath.HookIngress), Program: "tc_init_in", Priority: datapath.FixedTCPriority, Handle: 0x201, ProgramID: 11},
+		{Link: resolver.LinkIdentity{IfIndex: 8}, Hook: string(datapath.HookIngress), Program: "tc_masq", Priority: datapath.FixedTCPriority, Handle: 0x200, ProgramID: 12},
+	}
+}
+
+func TestEndpointRemoverInvalidatesMapsBeforeRemovingOwnedFilters(t *testing.T) {
+	maps := &fakeEndpointMaps{}
+	tc := &fakeEndpointTC{}
+	remover, err := NewEndpointRemover(maps, tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remover.Remove(context.Background(), ownedEndpoint(), reconcile.ActualState{Attachments: endpointAttachments()}); err != nil {
+		t.Fatal(err)
+	}
+	if len(maps.calls) != 3 || maps.calls[0] != "delete:ingress_cache" || maps.calls[1] != "delete:egressip_cache" || maps.calls[2] != "clear:policy_cache" {
+		t.Fatalf("unexpected Map invalidation order: %v", maps.calls)
+	}
+	if len(tc.specs) != 2 || tc.specs[0].Program != "tc_init_in" || tc.specs[1].Program != "tc_masq" {
+		t.Fatalf("unexpected filter removal: %+v", tc.specs)
+	}
+}
+
+func TestEndpointRemoverRejectsForeignFilter(t *testing.T) {
+	maps := &fakeEndpointMaps{}
+	tc := &fakeEndpointTC{}
+	remover, _ := NewEndpointRemover(maps, tc)
+	attachments := endpointAttachments()
+	attachments[0].Program = "foreign"
+	err := remover.Remove(context.Background(), ownedEndpoint(), reconcile.ActualState{Attachments: attachments})
+	var classified *reconcile.ClassifiedError
+	if !errors.As(err, &classified) || classified.Class() != reconcile.ErrorConflict || len(tc.specs) != 0 {
+		t.Fatalf("foreign filter was not rejected: err=%v specs=%+v", err, tc.specs)
+	}
+}
+
+func TestEndpointRemoverIsIdempotentWhenFiltersAreMissing(t *testing.T) {
+	maps := &fakeEndpointMaps{}
+	tc := &fakeEndpointTC{}
+	remover, _ := NewEndpointRemover(maps, tc)
+	if err := remover.Remove(context.Background(), ownedEndpoint(), reconcile.ActualState{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(tc.specs) != 0 || len(maps.calls) != 3 {
+		t.Fatalf("missing filters were not idempotent: maps=%v specs=%v", maps.calls, tc.specs)
+	}
+}
