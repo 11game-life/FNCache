@@ -10,6 +10,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/cat-cc-Lcos/FNCache/internal/config"
+	"github.com/cat-cc-Lcos/FNCache/internal/controlplane"
 	"github.com/cat-cc-Lcos/FNCache/internal/discovery"
 	"github.com/cat-cc-Lcos/FNCache/internal/kube"
 	"github.com/cat-cc-Lcos/FNCache/internal/overlay/flannel"
@@ -28,6 +29,7 @@ type DynamicRuntime struct {
 	factory    datapathComponentFactory
 	components *datapathComponents
 	observer   *DynamicObserver
+	worker     *queue.Worker
 }
 
 type datapathComponentFactory func(context.Context, datapathComponentConfig) (*datapathComponents, error)
@@ -95,8 +97,14 @@ func (r *DynamicRuntime) Run(ctx context.Context) error {
 		return err
 	}
 	go r.resync.Run(ctx)
+	workerDone := make(chan struct{})
+	go func() {
+		r.worker.Run(ctx)
+		close(workerDone)
+	}()
 	<-ctx.Done()
 	r.queue.ShutDown()
+	<-workerDone
 	if r.components != nil {
 		return r.components.Close()
 	}
@@ -137,6 +145,41 @@ func (r *DynamicRuntime) initializeDatapath(ctx context.Context) error {
 		_ = components.Close()
 		return err
 	}
-	r.components, r.observer = components, observer
+	remover, err := controlplane.NewEndpointRemover(components.mapWriter, components.tc)
+	if err != nil {
+		_ = components.Close()
+		return err
+	}
+	guard, err := NewEndpointReuseGuard(components.endpointResolver, r.config.NodeName)
+	if err != nil {
+		_ = components.Close()
+		return err
+	}
+	local, err := NewLocalEndpointHandler(LocalEndpointHandlerConfig{Store: r.store, Resolver: components.endpointResolver, LocalNode: r.config.NodeName, Desired: observer, Scanner: observer, Control: components.control, Endpoint: components.endpoint, Maps: components.maps, Publisher: components.publisher})
+	if err != nil {
+		_ = components.Close()
+		return err
+	}
+	deleting, err := NewLocalEndpointDeleteHandler(LocalEndpointDeleteHandlerConfig{Store: r.store, Ownership: components.ownership, LocalNode: r.config.NodeName, Desired: observer, Scanner: observer, Control: components.control, Remover: remover, ReuseGuard: guard, Publisher: components.publisher})
+	if err != nil {
+		_ = components.Close()
+		return err
+	}
+	remote, err := NewRemoteChangeHandler(RemoteChangeHandlerConfig{Store: r.store, LocalNode: r.config.NodeName, Desired: observer, Scanner: observer, Control: components.control, Maps: components.mapWriter, Publisher: components.publisher})
+	if err != nil {
+		_ = components.Close()
+		return err
+	}
+	router, err := NewDynamicHandlerRouter(local, deleting, remote)
+	if err != nil {
+		_ = components.Close()
+		return err
+	}
+	worker, err := queue.NewWorkerWithBarrier(r.queue, router.Handle, r.barrier)
+	if err != nil {
+		_ = components.Close()
+		return err
+	}
+	r.components, r.observer, r.worker = components, observer, worker
 	return nil
 }

@@ -12,7 +12,37 @@ import (
 
 	"github.com/cat-cc-Lcos/FNCache/internal/config"
 	"github.com/cat-cc-Lcos/FNCache/internal/controlplane"
+	"github.com/cat-cc-Lcos/FNCache/internal/datapath"
+	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
 )
+
+type dynamicRuntimeMaps struct{}
+
+func (dynamicRuntimeMaps) Delete(context.Context, string, []byte) (bool, error) { return true, nil }
+func (dynamicRuntimeMaps) Clear(context.Context, string) (int, error)           { return 0, nil }
+
+type dynamicRuntimeTC struct{}
+
+func (dynamicRuntimeTC) RemoveFilter(context.Context, datapath.TCFilterSpec) error { return nil }
+
+type dynamicRuntimeCommitter struct{}
+
+func (dynamicRuntimeCommitter) Commit(context.Context, reconcile.OwnershipState) error { return nil }
+
+type dynamicRuntimePublisherControl struct{}
+
+func (dynamicRuntimePublisherControl) Publish(context.Context, uint64, uint64, uint64, uint32) error {
+	return nil
+}
+
+func dynamicRuntimePublisher(t *testing.T) *controlplane.Publisher {
+	t.Helper()
+	publisher, err := controlplane.NewPublisher(dynamicRuntimeCommitter{}, dynamicRuntimePublisherControl{}, controlplane.PublishConfig{InstallationID: "install", NodeUID: "node-a", ELFBuildID: "sha256:test", HeartbeatNS: 1, HeartbeatTimeoutNS: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return publisher
+}
 
 func dynamicTestConfig() config.AgentConfiguration {
 	return config.AgentConfiguration{
@@ -27,8 +57,13 @@ func dynamicTestConfig() config.AgentConfiguration {
 
 func TestDynamicRuntimeStartsKubernetesControlChain(t *testing.T) {
 	sources := controlplane.Sources{Preflight: dynamicObserverPreflight{}, Flannel: dynamicObserverFlannel{}, Endpoints: dynamicObserverEndpoints{}, Pins: dynamicObserverPins{}, TC: dynamicObserverTC{}, Rules: dynamicObserverRules{}}
+	events := []string{}
 	factory := func(context.Context, datapathComponentConfig) (*datapathComponents, error) {
-		return &datapathComponents{sources: sources}, nil
+		return &datapathComponents{
+			cri: &fakeCloser{}, endpointResolver: &localHandlerResolver{endpoint: handlerEndpoint("unused"), events: &events}, sources: sources,
+			tc: dynamicRuntimeTC{}, mapWriter: dynamicRuntimeMaps{}, ownership: &deleteOwnership{state: reconcile.OwnershipState{SchemaVersion: 1, InstallationID: "install", NodeUID: "node-a"}},
+			control: &localHandlerControl{events: &events}, endpoint: &localHandlerEndpoint{events: &events}, maps: &localHandlerMaps{events: &events}, publisher: dynamicRuntimePublisher(t),
+		}, nil
 	}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: types.UID("node-a")}}
 	runtime, err := newDynamicRuntimeWithFactory(dynamicTestConfig(), fake.NewSimpleClientset(node), factory)

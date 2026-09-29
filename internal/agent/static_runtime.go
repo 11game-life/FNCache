@@ -40,12 +40,12 @@ type StaticRuntime struct {
 	pins            *datapath.PinScanner
 	tcScanner       *datapath.TCScanner
 	sources         controlplane.Sources
-	control         *runtimeControl
-	collection      *controlplane.CollectionEnsurer
-	marker          *controlplane.FlannelMarkerEnsurer
-	base            *controlplane.BaseEnsurer
-	endpoint        *controlplane.EndpointEnsurer
-	maps            *controlplane.MapEnsurer
+	control         localControl
+	collection      localCollectionEnsurer
+	marker          localMarkerEnsurer
+	base            localBaseEnsurer
+	endpoint        localEndpointEnsurer
+	maps            localMapEnsurer
 	publisher       *controlplane.Publisher
 }
 

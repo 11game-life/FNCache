@@ -11,6 +11,7 @@ import (
 	"github.com/cat-cc-Lcos/FNCache/internal/discovery"
 	"github.com/cat-cc-Lcos/FNCache/internal/overlay/flannel"
 	"github.com/cat-cc-Lcos/FNCache/internal/ownership"
+	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
 	"github.com/cat-cc-Lcos/FNCache/internal/resolver"
 )
 
@@ -29,18 +30,34 @@ type datapathComponentConfig struct {
 }
 
 type datapathComponents struct {
-	cri             io.Closer
-	endpointScanner *resolver.EndpointScanner
-	pins            *datapath.PinScanner
-	tcScanner       *datapath.TCScanner
-	sources         controlplane.Sources
-	control         *runtimeControl
-	collection      *controlplane.CollectionEnsurer
-	marker          *controlplane.FlannelMarkerEnsurer
-	base            *controlplane.BaseEnsurer
-	endpoint        *controlplane.EndpointEnsurer
-	maps            *controlplane.MapEnsurer
-	publisher       *controlplane.Publisher
+	cri              io.Closer
+	endpointResolver resolver.EndpointResolver
+	endpointScanner  *resolver.EndpointScanner
+	pins             *datapath.PinScanner
+	tcScanner        *datapath.TCScanner
+	tc               controlplane.EndpointFilterRemover
+	mapWriter        controlplane.EndpointMapRemover
+	ownership        localOwnershipSource
+	sources          controlplane.Sources
+	control          localControl
+	collection       localCollectionEnsurer
+	marker           localMarkerEnsurer
+	base             localBaseEnsurer
+	endpoint         localEndpointEnsurer
+	maps             localMapEnsurer
+	publisher        *controlplane.Publisher
+}
+
+type localCollectionEnsurer interface {
+	EnsureCollection(context.Context, reconcile.DesiredState, reconcile.ActualState) (bool, error)
+}
+
+type localMarkerEnsurer interface {
+	EnsureMarker(context.Context, reconcile.DesiredState) (bool, error)
+}
+
+type localBaseEnsurer interface {
+	EnsureBase(context.Context, reconcile.DesiredState, reconcile.ActualState) (bool, error)
 }
 
 func (c *datapathComponents) Close() error {
@@ -134,7 +151,7 @@ func newDatapathComponents(ctx context.Context, config datapathComponentConfig) 
 		return nil, err
 	}
 	components := &datapathComponents{
-		cri: cri, endpointScanner: endpointScanner, pins: pins, tcScanner: tcScanner,
+		cri: cri, endpointResolver: endpointResolver, endpointScanner: endpointScanner, pins: pins, tcScanner: tcScanner, tc: tc, mapWriter: mapWriter, ownership: store,
 		sources: controlplane.Sources{Preflight: discovery.NewPreflight(discovery.NewLinuxProbe("/")), Flannel: flannel.NewDiscovery(nil), Endpoints: endpointScanner, Pins: pins, TC: tcScanner, Rules: flannel.NewRuleScanner(nil)},
 		control: &runtimeControl{pinRoot: config.PinRoot, writer: controlWriter}, collection: collection, marker: marker,
 		base: base, endpoint: endpoint, maps: maps, publisher: publisher,
