@@ -202,6 +202,7 @@ const (
 	ReasonNetNSRestoreFailed    = "NETNS_RESTORE_FAILED"
 	ReasonDatapathNotReady      = "DATAPATH_NOT_READY"
 	ReasonCapabilityUnsupported = "CAPABILITY_UNSUPPORTED"
+	ReasonPodIPReusePending     = "POD_IP_REUSE_PENDING"
 )
 
 type ClassifiedError struct {
