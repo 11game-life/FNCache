@@ -61,7 +61,8 @@ type HeartbeatConfig struct {
 }
 
 type KubeConfig struct {
-	MaxStaleness Duration `yaml:"maxStaleness"`
+	MaxStaleness   Duration `yaml:"maxStaleness"`
+	ResyncInterval Duration `yaml:"resyncInterval"`
 }
 
 type HealthConfig struct {
@@ -137,8 +138,8 @@ func (c AgentConfiguration) Validate() error {
 	if interval <= 0 || timeout < 3*interval || timeout > 60*time.Second {
 		return fmt.Errorf("heartbeat timeout must be 3x interval and no more than 60s")
 	}
-	if time.Duration(c.Health.Interval) <= 0 || time.Duration(c.Kube.MaxStaleness) < time.Duration(c.Health.Interval) {
-		return fmt.Errorf("kube.maxStaleness must be at least health.interval")
+	if time.Duration(c.Health.Interval) <= 0 || time.Duration(c.Kube.MaxStaleness) < time.Duration(c.Health.Interval) || time.Duration(c.Kube.ResyncInterval) <= 0 {
+		return fmt.Errorf("kube intervals are invalid")
 	}
 	if time.Duration(c.Scan.IncrementalInterval) <= 0 || time.Duration(c.Scan.FullInterval) < time.Duration(c.Scan.IncrementalInterval) {
 		return fmt.Errorf("scan intervals are invalid")
@@ -163,7 +164,7 @@ func defaults() AgentConfiguration {
 		APIVersion: "oncache.io/v1alpha1", Kind: "AgentConfiguration", RuntimeEndpoint: "unix:///run/containerd/containerd.sock",
 		PinRoot: "/sys/fs/bpf/oncache/v1", StateDir: "/var/lib/oncache/v1", Overlay: OverlayConfig{Type: "flannel-vxlan", Device: "auto"},
 		Markers: MarkerConfig{MissMask: 0x04, EstablishedMask: 0x08}, Heartbeat: HeartbeatConfig{Interval: Duration(time.Second), Timeout: Duration(5 * time.Second)},
-		Kube: KubeConfig{MaxStaleness: Duration(30 * time.Second)}, Health: HealthConfig{Interval: Duration(5 * time.Second)},
+		Kube: KubeConfig{MaxStaleness: Duration(30 * time.Second), ResyncInterval: Duration(30 * time.Minute)}, Health: HealthConfig{Interval: Duration(5 * time.Second)},
 		Scan:   ScanConfig{IncrementalInterval: Duration(30 * time.Second), FullInterval: Duration(5 * time.Minute)},
 		Maps:   MapConfig{IngressCacheMaxEntries: 1024, EgressIPCacheMaxEntries: 4096, EgressCacheMaxEntries: 1024, PolicyCacheMaxEntries: 4096, DevMapMaxEntries: 8},
 		Server: ServerConfig{ListenAddress: ":9090"}, Features: FeatureConfig{Enabled: true}, LogLevel: "info",

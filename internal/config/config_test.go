@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadDefaultsAndEnvironment(t *testing.T) {
@@ -39,6 +40,21 @@ func TestLoadRejectsHeartbeatConstraint(t *testing.T) {
 	path := writeConfig(t, "nodeName: node-a\nheartbeat:\n  interval: 2s\n  timeout: 5s\n")
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected heartbeat validation error")
+	}
+}
+
+func TestDefaultsAndValidationIncludeResyncInterval(t *testing.T) {
+	cfg := defaults()
+	if time.Duration(cfg.Kube.ResyncInterval) != 30*time.Minute {
+		t.Fatalf("resync default = %v", cfg.Kube.ResyncInterval)
+	}
+	cfg.NodeName = "node-a"
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Kube.ResyncInterval = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("zero resync interval was accepted")
 	}
 }
 
