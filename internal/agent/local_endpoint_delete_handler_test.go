@@ -48,8 +48,12 @@ func deleteHandlerStore(t *testing.T, pods ...resolver.PodSnapshot) *kube.Snapsh
 func deleteHandler(t *testing.T, store *kube.SnapshotStore, ownership localOwnershipSource, events *[]string, publisher *localHandlerPublisher) *LocalEndpointDeleteHandler {
 	t.Helper()
 	base := reconcile.DesiredState{Enabled: true, Capability: discovery.CapabilityReport{Supported: true}, LocalEndpoints: map[string]resolver.Endpoint{"pod-1": handlerEndpoint("pod-1")}}
+	guard, err := NewEndpointReuseGuard(&localHandlerResolver{endpoint: handlerEndpoint("other")}, "node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler, err := NewLocalEndpointDeleteHandler(LocalEndpointDeleteHandlerConfig{
-		Store: store, Ownership: ownership, LocalNode: "node-a", Desired: &localHandlerDesired{desired: base, events: events}, Scanner: &localHandlerScanner{events: events}, Control: &localHandlerControl{events: events}, Remover: &deleteRemover{events: events}, Publisher: publisher,
+		Store: store, Ownership: ownership, LocalNode: "node-a", Desired: &localHandlerDesired{desired: base, events: events}, Scanner: &localHandlerScanner{events: events}, Control: &localHandlerControl{events: events}, Remover: &deleteRemover{events: events}, ReuseGuard: guard, Publisher: publisher,
 	})
 	if err != nil {
 		t.Fatal(err)

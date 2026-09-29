@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/netip"
 	"os"
 
 	"github.com/cat-cc-Lcos/FNCache/internal/kube"
@@ -20,15 +19,20 @@ type localEndpointRemover interface {
 	Remove(context.Context, reconcile.OwnedEndpoint, reconcile.ActualState) error
 }
 
+type localEndpointReuseGuard interface {
+	Check(context.Context, kube.Snapshot, string, reconcile.OwnedEndpoint) error
+}
+
 type LocalEndpointDeleteHandlerConfig struct {
-	Store     *kube.SnapshotStore
-	Ownership localOwnershipSource
-	LocalNode string
-	Desired   localDesiredSource
-	Scanner   localStateScanner
-	Control   localControl
-	Remover   localEndpointRemover
-	Publisher localPublisher
+	Store      *kube.SnapshotStore
+	Ownership  localOwnershipSource
+	LocalNode  string
+	Desired    localDesiredSource
+	Scanner    localStateScanner
+	Control    localControl
+	Remover    localEndpointRemover
+	ReuseGuard localEndpointReuseGuard
+	Publisher  localPublisher
 }
 
 type LocalEndpointDeleteHandler struct {
@@ -36,7 +40,7 @@ type LocalEndpointDeleteHandler struct {
 }
 
 func NewLocalEndpointDeleteHandler(config LocalEndpointDeleteHandlerConfig) (*LocalEndpointDeleteHandler, error) {
-	if config.Store == nil || config.Ownership == nil || config.LocalNode == "" || config.Desired == nil || config.Scanner == nil || config.Control == nil || config.Remover == nil || config.Publisher == nil {
+	if config.Store == nil || config.Ownership == nil || config.LocalNode == "" || config.Desired == nil || config.Scanner == nil || config.Control == nil || config.Remover == nil || config.ReuseGuard == nil || config.Publisher == nil {
 		return nil, fmt.Errorf("local endpoint delete handler dependencies are required")
 	}
 	return &LocalEndpointDeleteHandler{config: config}, nil
@@ -64,15 +68,15 @@ func (h *LocalEndpointDeleteHandler) Handle(ctx context.Context, key reconcile.R
 	if !ok {
 		return nil
 	}
-	if hasPodIPReuse(snapshot, key.UID, owned.PodIPv4) {
-		return reconcile.NewClassifiedError(reconcile.ErrorRetryable, reconcile.ReasonPodIPReusePending, 0, nil)
+	if err := h.config.ReuseGuard.Check(ctx, snapshot, key.UID, owned); err != nil {
+		return err
 	}
 	if err := h.config.Control.Disable(ctx); err != nil {
 		return fmt.Errorf("disable fast path: %w", err)
 	}
 	snapshot = h.config.Store.Snapshot()
-	if hasPodIPReuse(snapshot, key.UID, owned.PodIPv4) {
-		return reconcile.NewClassifiedError(reconcile.ErrorRetryable, reconcile.ReasonPodIPReusePending, 0, nil)
+	if err := h.config.ReuseGuard.Check(ctx, snapshot, key.UID, owned); err != nil {
+		return err
 	}
 	actual, err := h.config.Scanner.Scan(ctx)
 	if err != nil {
@@ -103,16 +107,4 @@ func (h *LocalEndpointDeleteHandler) Handle(ctx context.Context, key reconcile.R
 		return fmt.Errorf("publish local endpoint removal: %w", err)
 	}
 	return nil
-}
-
-func hasPodIPReuse(snapshot kube.Snapshot, deletedUID string, podIP netip.Addr) bool {
-	if !podIP.IsValid() || !podIP.Is4() {
-		return false
-	}
-	for uid, pod := range snapshot.Pods {
-		if uid != deletedUID && !pod.Deleting && pod.PodIPv4 == podIP {
-			return true
-		}
-	}
-	return false
 }

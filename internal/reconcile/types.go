@@ -203,6 +203,7 @@ const (
 	ReasonDatapathNotReady      = "DATAPATH_NOT_READY"
 	ReasonCapabilityUnsupported = "CAPABILITY_UNSUPPORTED"
 	ReasonPodIPReusePending     = "POD_IP_REUSE_PENDING"
+	ReasonEndpointIdentityReuse = "ENDPOINT_IDENTITY_REUSE_PENDING"
 )
 
 type ClassifiedError struct {
