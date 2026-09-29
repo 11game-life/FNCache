@@ -1,6 +1,7 @@
 package datapath
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -153,6 +154,49 @@ func (c *LoadedCollection) Unpin() error {
 }
 
 func (c *LoadedCollection) Close() error { return c.handle.Close() }
+
+func (m *Manager) CleanupLegacyProgramPins(ctx context.Context, activeProgramIDs map[uint32]struct{}) error {
+	for _, legacyName := range legacyProgramNames {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		path, _ := m.ProgramPinPath(legacyName)
+		if _, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("inspect legacy program pin %s: %w", legacyName, err)
+		}
+		program, err := ebpf.LoadPinnedProgram(path, nil)
+		if err != nil {
+			return fmt.Errorf("load legacy program pin %s: %w", legacyName, err)
+		}
+		info, err := program.Info()
+		if err != nil {
+			_ = program.Close()
+			return fmt.Errorf("inspect legacy program pin %s: %w", legacyName, err)
+		}
+		id, ok := info.ID()
+		if !ok {
+			_ = program.Close()
+			return fmt.Errorf("kernel did not provide a program ID for legacy pin %s", legacyName)
+		}
+		if _, active := activeProgramIDs[uint32(id)]; active {
+			if err := program.Close(); err != nil {
+				return fmt.Errorf("close legacy program pin %s: %w", legacyName, err)
+			}
+			continue
+		}
+		if err := program.Unpin(); err != nil {
+			_ = program.Close()
+			return fmt.Errorf("unpin legacy program %s: %w", legacyName, err)
+		}
+		if err := program.Close(); err != nil {
+			return fmt.Errorf("close legacy program %s: %w", legacyName, err)
+		}
+	}
+	return nil
+}
 
 func (m *Manager) pinPath(kind, name string) (string, error) {
 	if name == "" || filepath.Base(name) != name {
