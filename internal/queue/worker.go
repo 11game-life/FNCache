@@ -11,16 +11,25 @@ import (
 
 type Handler func(context.Context, reconcile.ReconcileKey) error
 
+type ExecutionBarrier interface {
+	Execute(context.Context, reconcile.ReconcileKey, func() error) error
+}
+
 type Worker struct {
 	queue   *Queue
 	handler Handler
+	barrier ExecutionBarrier
 }
 
 func NewWorker(queue *Queue, handler Handler) (*Worker, error) {
+	return NewWorkerWithBarrier(queue, handler, nil)
+}
+
+func NewWorkerWithBarrier(queue *Queue, handler Handler, barrier ExecutionBarrier) (*Worker, error) {
 	if queue == nil || handler == nil {
 		return nil, fmt.Errorf("queue and handler are required")
 	}
-	return &Worker{queue: queue, handler: handler}, nil
+	return &Worker{queue: queue, handler: handler, barrier: barrier}, nil
 }
 
 func (w *Worker) Run(ctx context.Context) {
@@ -39,7 +48,12 @@ func (w *Worker) Run(ctx context.Context) {
 		if shutdown {
 			return
 		}
-		err := w.handler(ctx, key)
+		var err error
+		if w.barrier != nil {
+			err = w.barrier.Execute(ctx, key, func() error { return w.handler(ctx, key) })
+		} else {
+			err = w.handler(ctx, key)
+		}
 		switch {
 		case err == nil || ctx.Err() != nil:
 			w.queue.Forget(key)

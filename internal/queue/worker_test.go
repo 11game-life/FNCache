@@ -77,3 +77,23 @@ func TestWorkerContextStopsQueue(t *testing.T) {
 		t.Fatal("worker did not stop after context cancellation")
 	}
 }
+
+func TestWorkerUsesExecutionBarrier(t *testing.T) {
+	q, _ := New(DefaultConfig())
+	barrier := reconcile.NewCoordinationBarrier()
+	done := make(chan struct{}, 1)
+	worker, err := NewWorkerWithBarrier(q, func(context.Context, reconcile.ReconcileKey) error { done <- struct{}{}; return nil }, barrier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go worker.Run(ctx)
+	q.Add(workerKey())
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("barrier worker did not process item")
+	}
+	q.ShutDown()
+}
