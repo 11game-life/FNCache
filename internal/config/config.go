@@ -32,6 +32,7 @@ type AgentConfiguration struct {
 	RuntimeEndpoint string          `yaml:"runtimeEndpoint"`
 	PinRoot         string          `yaml:"pinRoot"`
 	StateDir        string          `yaml:"stateDir"`
+	Datapath        DatapathConfig  `yaml:"datapath"`
 	Overlay         OverlayConfig   `yaml:"overlay"`
 	Markers         MarkerConfig    `yaml:"markers"`
 	Heartbeat       HeartbeatConfig `yaml:"heartbeat"`
@@ -50,9 +51,16 @@ type OverlayConfig struct {
 	Device string `yaml:"device"`
 }
 
+type DatapathConfig struct {
+	ELFPath    string `yaml:"elfPath"`
+	ELFBuildID string `yaml:"elfBuildID"`
+}
+
 type MarkerConfig struct {
-	MissMask        uint8 `yaml:"missMask"`
-	EstablishedMask uint8 `yaml:"establishedMask"`
+	Chain           string `yaml:"chain"`
+	Comment         string `yaml:"comment"`
+	MissMask        uint8  `yaml:"missMask"`
+	EstablishedMask uint8  `yaml:"establishedMask"`
 }
 
 type HeartbeatConfig struct {
@@ -131,6 +139,12 @@ func (c AgentConfiguration) Validate() error {
 	if c.Overlay.Type != "flannel-vxlan" || c.Overlay.Device == "" {
 		return fmt.Errorf("overlay must be flannel-vxlan with a device")
 	}
+	if c.Datapath.ELFPath == "" || !filepath.IsAbs(c.Datapath.ELFPath) || c.Datapath.ELFBuildID == "" {
+		return fmt.Errorf("datapath ELF path and build ID are required")
+	}
+	if c.Markers.Chain == "" || c.Markers.Comment == "" {
+		return fmt.Errorf("marker chain and comment are required")
+	}
 	if c.Markers.MissMask != 0x04 || c.Markers.EstablishedMask != 0x08 {
 		return fmt.Errorf("markers must use missMask 0x04 and establishedMask 0x08")
 	}
@@ -162,8 +176,8 @@ func (c AgentConfiguration) Validate() error {
 func defaults() AgentConfiguration {
 	return AgentConfiguration{
 		APIVersion: "oncache.io/v1alpha1", Kind: "AgentConfiguration", RuntimeEndpoint: "unix:///run/containerd/containerd.sock",
-		PinRoot: "/sys/fs/bpf/oncache/v1", StateDir: "/var/lib/oncache/v1", Overlay: OverlayConfig{Type: "flannel-vxlan", Device: "auto"},
-		Markers: MarkerConfig{MissMask: 0x04, EstablishedMask: 0x08}, Heartbeat: HeartbeatConfig{Interval: Duration(time.Second), Timeout: Duration(5 * time.Second)},
+		PinRoot: "/sys/fs/bpf/oncache/v1", StateDir: "/var/lib/oncache/v1", Datapath: DatapathConfig{ELFPath: "/opt/oncache/bpf/tc_prog_kern.o", ELFBuildID: "sha256:dev"}, Overlay: OverlayConfig{Type: "flannel-vxlan", Device: "auto"},
+		Markers: MarkerConfig{Chain: "ONCACHE", Comment: "oncache:dev", MissMask: 0x04, EstablishedMask: 0x08}, Heartbeat: HeartbeatConfig{Interval: Duration(time.Second), Timeout: Duration(5 * time.Second)},
 		Kube: KubeConfig{MaxStaleness: Duration(30 * time.Second), ResyncInterval: Duration(30 * time.Minute)}, Health: HealthConfig{Interval: Duration(5 * time.Second)},
 		Scan:   ScanConfig{IncrementalInterval: Duration(30 * time.Second), FullInterval: Duration(5 * time.Minute)},
 		Maps:   MapConfig{IngressCacheMaxEntries: 1024, EgressIPCacheMaxEntries: 4096, EgressCacheMaxEntries: 1024, PolicyCacheMaxEntries: 4096, DevMapMaxEntries: 8},

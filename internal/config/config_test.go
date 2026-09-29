@@ -43,6 +43,13 @@ func TestLoadRejectsHeartbeatConstraint(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsMissingDynamicDatapathIdentity(t *testing.T) {
+	path := writeConfig(t, "nodeName: node-a\ndatapath:\n  elfPath: /opt/oncache/bpf/tc_prog_kern.o\n  elfBuildID: \"\"\n")
+	if _, err := Load(path); err == nil {
+		t.Fatal("missing ELF build ID was accepted")
+	}
+}
+
 func TestDefaultsAndValidationIncludeResyncInterval(t *testing.T) {
 	cfg := defaults()
 	if time.Duration(cfg.Kube.ResyncInterval) != 30*time.Minute {

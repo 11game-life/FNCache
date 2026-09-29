@@ -13,10 +13,15 @@ data:
     runtimeEndpoint: {{ .Values.config.runtimeEndpoint | quote }}
     pinRoot: {{ .Values.config.pinRoot | quote }}
     stateDir: {{ .Values.config.stateDir | quote }}
+    datapath:
+      elfPath: {{ .Values.config.datapath.elfPath | quote }}
+      elfBuildID: {{ .Values.config.datapath.elfBuildID | quote }}
     overlay:
       type: {{ .Values.config.overlay.type | quote }}
       device: {{ .Values.config.overlay.device | quote }}
     markers:
+      chain: {{ .Values.config.markers.chain | quote }}
+      comment: {{ default (printf "oncache:%s" .Release.Name) .Values.config.markers.comment | quote }}
       missMask: {{ .Values.config.markers.missMask | quote }}
       establishedMask: {{ .Values.config.markers.establishedMask | quote }}
     heartbeat:

@@ -13,10 +13,15 @@ config:
   runtimeEndpoint: unix:///run/containerd/containerd.sock
   pinRoot: /sys/fs/bpf/oncache/v1
   stateDir: /var/lib/oncache/v1
+  datapath:
+    elfPath: /opt/oncache/bpf/tc_prog_kern.o
+    elfBuildID: sha256:dev
   overlay:
     type: flannel-vxlan
     device: auto
   markers:
+    chain: ONCACHE
+    comment: ""
     missMask: 0x04
     establishedMask: 0x08
   heartbeat:
