@@ -43,7 +43,11 @@ func TestM2LocalStaticRuntime(t *testing.T) {
 	}
 	runStaticAgent(t)
 	cleaned := snapshotLocalRuntime(t, pinRoot, statePath, markerComment, underlay)
-	assertExpectedPins(t, cleaned)
+	for _, name := range []string{"tc_init_e", "tc_init_in", "tc_masq", "tc_restore", "tc_init_e_func"} {
+		if !hasName(cleaned.programs, name) {
+			t.Fatalf("expected canonical and retained legacy program pins, got=%v", cleaned.programs)
+		}
+	}
 	installExternalFilter(t, pinRoot, underlay)
 	withExternal := snapshotLocalRuntime(t, pinRoot, statePath, markerComment, underlay)
 
@@ -240,6 +244,15 @@ func assertExpectedPins(t *testing.T, snapshot localRuntimeSnapshot) {
 	if !reflect.DeepEqual(snapshot.programs, wantPrograms) {
 		t.Fatalf("unexpected Program pins: got=%v want=%v", snapshot.programs, wantPrograms)
 	}
+}
+
+func hasName(names []string, want string) bool {
+	for _, name := range names {
+		if name == want {
+			return true
+		}
+	}
+	return false
 }
 
 func assertSameSnapshot(t *testing.T, before, after localRuntimeSnapshot, phase string) {

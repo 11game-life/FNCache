@@ -24,14 +24,12 @@ type collectionOps struct {
 
 type collectionOpsFactory func(string) (collectionOps, error)
 type controlInitializer func(context.Context, string) error
-type legacyPinCleanup func(context.Context, string, map[uint32]struct{}) error
 
 type CollectionEnsurer struct {
 	elfPath       string
 	pinRoot       string
 	newOps        collectionOpsFactory
 	initializeCtl controlInitializer
-	cleanupLegacy legacyPinCleanup
 }
 
 func NewCollectionEnsurer(elfPath, pinRoot string) (*CollectionEnsurer, error) {
@@ -46,16 +44,10 @@ func NewCollectionEnsurer(elfPath, pinRoot string) (*CollectionEnsurer, error) {
 				return manager.LoadAndPin(spec, schema)
 			},
 		}, nil
-	}, initializeControlMap, func(ctx context.Context, root string, activeProgramIDs map[uint32]struct{}) error {
-		manager, err := datapath.NewManager(root)
-		if err != nil {
-			return err
-		}
-		return manager.CleanupLegacyProgramPins(ctx, activeProgramIDs)
-	})
+	}, initializeControlMap)
 }
 
-func newCollectionEnsurer(elfPath, pinRoot string, factory collectionOpsFactory, initialize controlInitializer, cleanup ...legacyPinCleanup) (*CollectionEnsurer, error) {
+func newCollectionEnsurer(elfPath, pinRoot string, factory collectionOpsFactory, initialize controlInitializer) (*CollectionEnsurer, error) {
 	if elfPath == "" || !filepath.IsAbs(elfPath) {
 		return nil, fmt.Errorf("BPF ELF path must be an absolute file path")
 	}
@@ -65,14 +57,7 @@ func newCollectionEnsurer(elfPath, pinRoot string, factory collectionOpsFactory,
 	if factory == nil || initialize == nil {
 		return nil, fmt.Errorf("collection dependencies are required")
 	}
-	if len(cleanup) > 1 {
-		return nil, fmt.Errorf("at most one legacy pin cleanup function is allowed")
-	}
-	var cleanupLegacy legacyPinCleanup
-	if len(cleanup) == 1 {
-		cleanupLegacy = cleanup[0]
-	}
-	return &CollectionEnsurer{elfPath: filepath.Clean(elfPath), pinRoot: filepath.Clean(pinRoot), newOps: factory, initializeCtl: initialize, cleanupLegacy: cleanupLegacy}, nil
+	return &CollectionEnsurer{elfPath: filepath.Clean(elfPath), pinRoot: filepath.Clean(pinRoot), newOps: factory, initializeCtl: initialize}, nil
 }
 
 func (e *CollectionEnsurer) EnsureCollection(ctx context.Context, desired reconcile.DesiredState, actual reconcile.ActualState) (bool, error) {
@@ -81,11 +66,6 @@ func (e *CollectionEnsurer) EnsureCollection(ctx context.Context, desired reconc
 	}
 	if !desired.Enabled {
 		return false, nil
-	}
-	if e.cleanupLegacy != nil {
-		if err := e.cleanupLegacy(ctx, e.pinRoot, activeLegacyProgramIDs(actual)); err != nil {
-			return false, fmt.Errorf("cleanup legacy BPF program pins: %w", err)
-		}
 	}
 	if collectionReady(actual) {
 		return false, nil
@@ -118,24 +98,6 @@ func (e *CollectionEnsurer) EnsureCollection(ctx context.Context, desired reconc
 	}
 	return true, nil
 }
-
-func activeLegacyProgramIDs(actual reconcile.ActualState) map[uint32]struct{} {
-	canonicalIDs := make(map[uint32]struct{}, len(actual.Programs))
-	for _, program := range actual.Programs {
-		if program.ID != 0 {
-			canonicalIDs[program.ID] = struct{}{}
-		}
-	}
-	active := make(map[uint32]struct{})
-	for _, attachment := range actual.Attachments {
-		_, canonical := canonicalIDs[attachment.ProgramID]
-		if attachment.ProgramID != 0 && (datapath.IsLegacyProgramName(attachment.Program) || !canonical) {
-			active[attachment.ProgramID] = struct{}{}
-		}
-	}
-	return active
-}
-
 func collectionReady(actual reconcile.ActualState) bool {
 	schema := datapath.V1Schema()
 	if len(actual.Programs) != len(schema.Programs) || len(actual.Maps) != len(schema.Maps) {

@@ -77,15 +77,6 @@ var legacyProgramNames = map[string]string{
 	"tc_init_in": "tc_init_in_func",
 }
 
-func IsLegacyProgramName(name string) bool {
-	for _, legacy := range legacyProgramNames {
-		if legacy == name {
-			return true
-		}
-	}
-	return false
-}
-
 func NewTCManager(backend TCBackend) (*TCManager, error) {
 	if backend == nil {
 		return nil, fmt.Errorf("TC backend is required")

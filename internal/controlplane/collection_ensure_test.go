@@ -35,29 +35,6 @@ func TestCollectionEnsurerSkipsReadyCollection(t *testing.T) {
 	}
 }
 
-func TestCollectionEnsurerCleansLegacyPinsBeforeReadyCheck(t *testing.T) {
-	called := false
-	var active map[uint32]struct{}
-	ensurer, err := newCollectionEnsurer("/tmp/oncache-test.o", "/sys/fs/bpf/oncache/v1", func(string) (collectionOps, error) {
-		return collectionOps{}, errors.New("collection load should be skipped")
-	}, func(context.Context, string) error { return nil }, func(_ context.Context, root string, ids map[uint32]struct{}) error {
-		called = root == "/sys/fs/bpf/oncache/v1"
-		active = ids
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	actual := readyCollectionState()
-	actual.Attachments = []reconcile.AttachmentState{{ProgramID: 99}}
-	if changed, err := ensurer.EnsureCollection(context.Background(), reconcile.DesiredState{Enabled: true}, actual); err != nil || changed || !called {
-		t.Fatalf("legacy cleanup did not run before ready check: changed=%v err=%v called=%v", changed, err, called)
-	}
-	if _, ok := active[99]; !ok || len(active) != 1 {
-		t.Fatalf("unexpected active program IDs: %v", active)
-	}
-}
-
 func TestCollectionEnsurerLoadsPinsAndInitializesControl(t *testing.T) {
 	elf := filepath.Join(t.TempDir(), "datapath.o")
 	if err := os.WriteFile(elf, []byte("elf"), 0600); err != nil {
