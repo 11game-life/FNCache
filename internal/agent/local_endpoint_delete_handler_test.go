@@ -114,3 +114,18 @@ func TestLocalEndpointDeleteHandlerDefersIPReuse(t *testing.T) {
 		t.Fatalf("IP reuse was not deferred: err=%v events=%v", err, events)
 	}
 }
+
+func TestLocalEndpointDeleteHandlerCleansWhenPodMovesRemote(t *testing.T) {
+	events := []string{}
+	pod := handlerPod()
+	pod.NodeName = "node-b"
+	store := deleteHandlerStore(t, pod)
+	publisher := &localHandlerPublisher{events: &events}
+	handler := deleteHandler(t, store, &deleteOwnership{state: deleteOwnershipState()}, &events, publisher)
+	if err := handler.Handle(context.Background(), reconcile.ReconcileKey{Kind: reconcile.ReconcileLocalEndpoint, UID: "pod-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(publisher.desired.LocalEndpoints) != 0 || len(events) != 6 || events[2] != "remove" || events[5] != "publish" {
+		t.Fatalf("remote migration did not clean old local endpoint: desired=%#v events=%v", publisher.desired.LocalEndpoints, events)
+	}
+}
