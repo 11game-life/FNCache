@@ -19,6 +19,7 @@ config:
   overlay:
     type: flannel-vxlan
     device: auto
+    vxlanLinkName: flannel.1
   markers:
     chain: ONCACHE
     comment: ""

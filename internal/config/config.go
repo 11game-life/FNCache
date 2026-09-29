@@ -47,8 +47,9 @@ type AgentConfiguration struct {
 }
 
 type OverlayConfig struct {
-	Type   string `yaml:"type"`
-	Device string `yaml:"device"`
+	Type          string `yaml:"type"`
+	Device        string `yaml:"device"`
+	VXLANLinkName string `yaml:"vxlanLinkName"`
 }
 
 type DatapathConfig struct {
@@ -136,8 +137,8 @@ func (c AgentConfiguration) Validate() error {
 	if c.NodeName == "" || c.RuntimeEndpoint == "" {
 		return fmt.Errorf("nodeName and runtimeEndpoint are required")
 	}
-	if c.Overlay.Type != "flannel-vxlan" || c.Overlay.Device == "" {
-		return fmt.Errorf("overlay must be flannel-vxlan with a device")
+	if c.Overlay.Type != "flannel-vxlan" || c.Overlay.Device == "" || c.Overlay.VXLANLinkName == "" {
+		return fmt.Errorf("overlay must be flannel-vxlan with device and VXLAN link")
 	}
 	if c.Datapath.ELFPath == "" || !filepath.IsAbs(c.Datapath.ELFPath) || c.Datapath.ELFBuildID == "" {
 		return fmt.Errorf("datapath ELF path and build ID are required")
@@ -176,7 +177,7 @@ func (c AgentConfiguration) Validate() error {
 func defaults() AgentConfiguration {
 	return AgentConfiguration{
 		APIVersion: "oncache.io/v1alpha1", Kind: "AgentConfiguration", RuntimeEndpoint: "unix:///run/containerd/containerd.sock",
-		PinRoot: "/sys/fs/bpf/oncache/v1", StateDir: "/var/lib/oncache/v1", Datapath: DatapathConfig{ELFPath: "/opt/oncache/bpf/tc_prog_kern.o", ELFBuildID: "sha256:dev"}, Overlay: OverlayConfig{Type: "flannel-vxlan", Device: "auto"},
+		PinRoot: "/sys/fs/bpf/oncache/v1", StateDir: "/var/lib/oncache/v1", Datapath: DatapathConfig{ELFPath: "/opt/oncache/bpf/tc_prog_kern.o", ELFBuildID: "sha256:dev"}, Overlay: OverlayConfig{Type: "flannel-vxlan", Device: "auto", VXLANLinkName: "flannel.1"},
 		Markers: MarkerConfig{Chain: "ONCACHE", Comment: "oncache:dev", MissMask: 0x04, EstablishedMask: 0x08}, Heartbeat: HeartbeatConfig{Interval: Duration(time.Second), Timeout: Duration(5 * time.Second)},
 		Kube: KubeConfig{MaxStaleness: Duration(30 * time.Second), ResyncInterval: Duration(30 * time.Minute)}, Health: HealthConfig{Interval: Duration(5 * time.Second)},
 		Scan:   ScanConfig{IncrementalInterval: Duration(30 * time.Second), FullInterval: Duration(5 * time.Minute)},

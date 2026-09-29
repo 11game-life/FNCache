@@ -19,6 +19,7 @@ data:
     overlay:
       type: {{ .Values.config.overlay.type | quote }}
       device: {{ .Values.config.overlay.device | quote }}
+      vxlanLinkName: {{ .Values.config.overlay.vxlanLinkName | quote }}
     markers:
       chain: {{ .Values.config.markers.chain | quote }}
       comment: {{ default (printf "oncache:%s" .Release.Name) .Values.config.markers.comment | quote }}
