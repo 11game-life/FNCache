@@ -64,6 +64,12 @@ func (c *Coordinator) FullReconcile(ctx context.Context) (ReconcileResult, error
 	if err != nil {
 		return c.fail(result, err, true)
 	}
+	if !desired.Enabled {
+		result.Generation = desired.Generation
+		c.setState(AgentDisabled)
+		result.State = AgentDisabled
+		return result, nil
+	}
 	actual, err := c.scan(ctx, &result)
 	if err != nil {
 		return c.fail(result, err, true)

@@ -52,7 +52,7 @@ func (f *fakeBackend) Commit(context.Context, DesiredState, ActualState) error {
 func (f *fakeBackend) Publish(context.Context, DesiredState) error { return f.step("publish") }
 
 func TestCoordinatorFullReconcilePublishesVerifiedState(t *testing.T) {
-	backend := &fakeBackend{desired: DesiredState{Generation: 42}, changed: true}
+	backend := &fakeBackend{desired: DesiredState{Generation: 42, Enabled: true}, changed: true}
 	coordinator, err := NewCoordinator(backend)
 	if err != nil {
 		t.Fatal(err)
@@ -67,8 +67,24 @@ func TestCoordinatorFullReconcilePublishesVerifiedState(t *testing.T) {
 	}
 }
 
+func TestCoordinatorTreatsDisabledDesiredStateAsSafeTerminalState(t *testing.T) {
+	backend := &fakeBackend{desired: DesiredState{Generation: 43}}
+	coordinator, err := NewCoordinator(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := coordinator.FullReconcile(context.Background())
+	if err != nil || result.State != AgentDisabled || coordinator.State() != AgentDisabled || result.Generation != 43 || result.Changed {
+		t.Fatalf("unexpected disabled reconcile result: result=%+v err=%v state=%s", result, err, coordinator.State())
+	}
+	want := []string{"disable", "discover"}
+	if !reflect.DeepEqual(backend.steps, want) {
+		t.Fatalf("unsafe stages ran for disabled desired state: got=%v want=%v", backend.steps, want)
+	}
+}
+
 func TestCoordinatorFailureDisablesAndDoesNotPublish(t *testing.T) {
-	backend := &fakeBackend{desired: DesiredState{Generation: 42}, failStep: "verify"}
+	backend := &fakeBackend{desired: DesiredState{Generation: 42, Enabled: true}, failStep: "verify"}
 	coordinator, _ := NewCoordinator(backend)
 	result, err := coordinator.FullReconcile(context.Background())
 	if err == nil || result.State != AgentDisabled || coordinator.State() != AgentDisabled {
@@ -82,7 +98,7 @@ func TestCoordinatorFailureDisablesAndDoesNotPublish(t *testing.T) {
 }
 
 func TestCoordinatorSerializesFullReconcile(t *testing.T) {
-	backend := &fakeBackend{desired: DesiredState{Generation: 1}, entered: make(chan string, 2), proceed: make(chan struct{})}
+	backend := &fakeBackend{desired: DesiredState{Generation: 1, Enabled: true}, entered: make(chan string, 2), proceed: make(chan struct{})}
 	coordinator, _ := NewCoordinator(backend)
 	firstDone := make(chan error, 1)
 	go func() { _, err := coordinator.FullReconcile(context.Background()); firstDone <- err }()
@@ -151,7 +167,7 @@ func TestCoordinatorStopsAfterEveryFailedStage(t *testing.T) {
 	stages := []string{"disable", "discover", "scan", "ensure", "verify", "commit", "publish"}
 	for _, failedStage := range stages {
 		t.Run(failedStage, func(t *testing.T) {
-			backend := &fakeBackend{desired: DesiredState{Generation: 42}, failStep: failedStage}
+			backend := &fakeBackend{desired: DesiredState{Generation: 42, Enabled: true}, failStep: failedStage}
 			coordinator, err := NewCoordinator(backend)
 			if err != nil {
 				t.Fatal(err)
@@ -178,7 +194,7 @@ func TestCoordinatorStopsAfterEveryFailedStage(t *testing.T) {
 }
 
 func TestCoordinatorRecoversAfterFailedReconcile(t *testing.T) {
-	backend := &fakeBackend{desired: DesiredState{Generation: 42}, failStep: "verify"}
+	backend := &fakeBackend{desired: DesiredState{Generation: 42, Enabled: true}, failStep: "verify"}
 	coordinator, _ := NewCoordinator(backend)
 	if _, err := coordinator.FullReconcile(context.Background()); err == nil {
 		t.Fatal("expected first reconcile to fail")

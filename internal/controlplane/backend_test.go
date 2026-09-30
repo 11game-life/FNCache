@@ -99,6 +99,42 @@ func TestFirstPassBackendRunsAllStagesAndPublishesLastScan(t *testing.T) {
 	}
 }
 
+func TestFirstPassBackendLeavesUnsupportedNodeDisabled(t *testing.T) {
+	desired := publishTestDesired()
+	desired.Enabled = false
+	desired.Capability.Supported = false
+	observer := &backendObserver{desired: desired, actual: reconcile.ActualState{}}
+	control := &backendControl{}
+	collection := &backendCollection{}
+	marker := &backendMarker{}
+	base := &backendEnsurer{}
+	endpoint := &backendEnsurer{}
+	maps := &backendEnsurer{}
+	store := &fakeOwnershipCommitter{events: new([]string)}
+	publisher, err := NewPublisher(store, &fakeControlPublisher{events: store.events}, publishTestConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, err := NewFirstPassBackend(FirstPassBackendConfig{
+		Observer: observer, Control: control, Collection: collection, Marker: marker,
+		Base: base, Endpoint: endpoint, Maps: maps, Publisher: publisher,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := reconcile.NewCoordinator(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := coordinator.FullReconcile(context.Background())
+	if err != nil || result.State != reconcile.AgentDisabled || !control.disabled {
+		t.Fatalf("unsupported node did not remain disabled: result=%+v err=%v controlDisabled=%v", result, err, control.disabled)
+	}
+	if observer.scans != 0 || collection.calls != 0 || marker.calls != 0 || base.calls != 0 || endpoint.calls != 0 || maps.calls != 0 || len(*store.events) != 0 {
+		t.Fatalf("disabled path performed unsafe work: scans=%d collection=%d marker=%d base=%d endpoint=%d maps=%d events=%v", observer.scans, collection.calls, marker.calls, base.calls, endpoint.calls, maps.calls, *store.events)
+	}
+}
+
 func TestFirstPassBackendStopsBeforeOwnershipOnEnsureFailure(t *testing.T) {
 	desired := publishTestDesired()
 	store := &fakeOwnershipCommitter{events: new([]string)}
