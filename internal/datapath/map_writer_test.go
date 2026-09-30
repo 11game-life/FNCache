@@ -126,7 +126,8 @@ func TestMapWriterEnsurePropagatesFailuresAndCancellation(t *testing.T) {
 
 func TestMapWriterDeleteAndClearAreIdempotent(t *testing.T) {
 	handle := &fakeMapHandle{value: []byte{1, 2}}
-	writer, _ := newMapWriter(t.TempDir(), func(string) (mapHandle, error) { return handle, nil })
+	control := &fakeControlMap{value: ControlV1{ABIVersion: controlMapABIVersion}}
+	writer, _ := newMapWriterWithControl(t.TempDir(), func(string) (mapHandle, error) { return handle, nil }, func(string) (controlMap, error) { return control, nil })
 	deleted, err := writer.Delete(context.Background(), "ingress_cache", []byte{1, 2})
 	if err != nil || !deleted || len(handle.deleted) != 1 {
 		t.Fatalf("Map key was not deleted: deleted=%v calls=%d err=%v", deleted, len(handle.deleted), err)
@@ -136,9 +137,39 @@ func TestMapWriterDeleteAndClearAreIdempotent(t *testing.T) {
 		t.Fatalf("Map was not cleared: count=%d calls=%d err=%v", count, len(handle.deleted), err)
 	}
 	missing := &fakeMapHandle{deleteErr: ebpf.ErrKeyNotExist}
-	writer, _ = newMapWriter(t.TempDir(), func(string) (mapHandle, error) { return missing, nil })
+	writer, _ = newMapWriterWithControl(t.TempDir(), func(string) (mapHandle, error) { return missing, nil }, func(string) (controlMap, error) { return control, nil })
 	deleted, err = writer.Delete(context.Background(), "ingress_cache", []byte{1})
 	if err != nil || deleted {
 		t.Fatalf("missing Map key was not idempotent: deleted=%v err=%v", deleted, err)
+	}
+}
+
+func TestMapWriterDeleteAndClearRequireVerifiedDisabledControlMap(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     ControlV1
+		lookupErr error
+	}{
+		{name: "enabled", value: ControlV1{ABIVersion: controlMapABIVersion, Enabled: 1}},
+		{name: "invalid enabled value", value: ControlV1{ABIVersion: controlMapABIVersion, Enabled: 2}},
+		{name: "ABI mismatch", value: ControlV1{ABIVersion: controlMapABIVersion + 1}},
+		{name: "lookup failure", lookupErr: errors.New("lookup failed")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handle := &fakeMapHandle{value: []byte{1, 2}}
+			control := &fakeControlMap{value: test.value, lookupErr: test.lookupErr}
+			writer, err := newMapWriterWithControl(t.TempDir(), func(string) (mapHandle, error) { return handle, nil }, func(string) (controlMap, error) { return control, nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if deleted, err := writer.Delete(context.Background(), "ingress_cache", []byte{1, 2}); err == nil || deleted || len(handle.deleted) != 0 {
+				t.Fatalf("unsafe Delete was not rejected: deleted=%v calls=%d err=%v", deleted, len(handle.deleted), err)
+			}
+			handle.deleted = nil
+			if count, err := writer.Clear(context.Background(), "policy_cache"); err == nil || count != 0 || len(handle.deleted) != 0 {
+				t.Fatalf("unsafe Clear was not rejected: count=%d calls=%d err=%v", count, len(handle.deleted), err)
+			}
+		})
 	}
 }
