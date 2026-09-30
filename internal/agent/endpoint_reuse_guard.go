@@ -36,7 +36,10 @@ func (g *EndpointReuseGuard) Check(ctx context.Context, snapshot kube.Snapshot, 
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
-			if errors.Is(err, resolver.ErrEndpointNotReady) || errors.Is(err, resolver.ErrStaleObject) || errors.Is(err, resolver.ErrUnsupported) {
+			if errors.Is(err, resolver.ErrEndpointNotReady) {
+				return reconcile.NewClassifiedError(reconcile.ErrorRetryable, reconcile.ReasonEndpointNotReady, 0, err)
+			}
+			if errors.Is(err, resolver.ErrStaleObject) || errors.Is(err, resolver.ErrUnsupported) {
 				return reconcile.NewClassifiedError(reconcile.ErrorRetryable, reconcile.ReasonEndpointIdentityReuse, 0, err)
 			}
 			return fmt.Errorf("resolve Pod %s for endpoint reuse check: %w", uid, err)

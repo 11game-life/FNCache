@@ -2,7 +2,9 @@ package controlplane
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
@@ -38,6 +40,14 @@ type fastPathDisabler interface {
 	Disable(context.Context) error
 }
 
+type endpointOwnershipSource interface {
+	Load(context.Context) (reconcile.OwnershipState, error)
+}
+
+type endpointRemover interface {
+	Remove(context.Context, reconcile.OwnedEndpoint, reconcile.ActualState, reconcile.DesiredState) error
+}
+
 type FirstPassBackendConfig struct {
 	Observer   observationBackend
 	Control    fastPathDisabler
@@ -46,6 +56,8 @@ type FirstPassBackendConfig struct {
 	Base       baseEnsurer
 	Endpoint   endpointEnsurer
 	Maps       endpointMapEnsurer
+	Ownership  endpointOwnershipSource
+	Remover    endpointRemover
 	Publisher  *Publisher
 }
 
@@ -59,11 +71,13 @@ type FirstPassBackend struct {
 	base       baseEnsurer
 	endpoint   endpointEnsurer
 	maps       endpointMapEnsurer
+	ownership  endpointOwnershipSource
+	remover    endpointRemover
 	publisher  *Publisher
 }
 
 func NewFirstPassBackend(config FirstPassBackendConfig) (*FirstPassBackend, error) {
-	missing := make([]string, 0, 8)
+	missing := make([]string, 0, 10)
 	if config.Observer == nil {
 		missing = append(missing, "observer")
 	}
@@ -85,6 +99,12 @@ func NewFirstPassBackend(config FirstPassBackendConfig) (*FirstPassBackend, erro
 	if config.Maps == nil {
 		missing = append(missing, "maps")
 	}
+	if config.Ownership == nil {
+		missing = append(missing, "ownership")
+	}
+	if config.Remover == nil {
+		missing = append(missing, "remover")
+	}
 	if config.Publisher == nil {
 		missing = append(missing, "publisher")
 	}
@@ -94,7 +114,7 @@ func NewFirstPassBackend(config FirstPassBackendConfig) (*FirstPassBackend, erro
 	return &FirstPassBackend{
 		observer: config.Observer, control: config.Control, collection: config.Collection,
 		marker: config.Marker, base: config.Base, endpoint: config.Endpoint,
-		maps: config.Maps, publisher: config.Publisher,
+		maps: config.Maps, ownership: config.Ownership, remover: config.Remover, publisher: config.Publisher,
 	}, nil
 }
 
@@ -130,6 +150,11 @@ func (b *FirstPassBackend) Ensure(ctx context.Context, desired reconcile.Desired
 	if err != nil {
 		return changed, fmt.Errorf("rescan after collection ensure: %w", err)
 	}
+	cleanupChanged, err := b.cleanupStaleEndpoints(ctx, desired, current)
+	if err != nil {
+		return changed || cleanupChanged, fmt.Errorf("cleanup stale endpoints: %w", err)
+	}
+	changed = changed || cleanupChanged
 	baseChanged, err := b.base.EnsureBase(ctx, desired, current)
 	if err != nil {
 		return changed || baseChanged, fmt.Errorf("ensure base: %w", err)
@@ -154,6 +179,49 @@ func (b *FirstPassBackend) Ensure(ctx context.Context, desired reconcile.Desired
 		changed = changed || mapChanged
 	}
 	return changed, nil
+}
+
+func (b *FirstPassBackend) cleanupStaleEndpoints(ctx context.Context, desired reconcile.DesiredState, actual reconcile.ActualState) (bool, error) {
+	state, err := b.ownership.Load(ctx)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load ownership: %w", err)
+	}
+	if len(state.Endpoints) == 0 {
+		return false, nil
+	}
+	if state.InstallationID != b.publisher.config.InstallationID || state.NodeUID != b.publisher.config.NodeUID {
+		return false, fmt.Errorf("ownership state identity does not match the active datapath")
+	}
+	if state.ELFBuildID != b.publisher.config.ELFBuildID || state.ABI != reconcile.BPFABIVersion {
+		return false, nil
+	}
+
+	uids := make([]string, 0, len(state.Endpoints))
+	for uid := range state.Endpoints {
+		uids = append(uids, uid)
+	}
+	sort.Strings(uids)
+	changed := false
+	for _, uid := range uids {
+		owned := state.Endpoints[uid]
+		endpoint, ok := desired.LocalEndpoints[uid]
+		if ok && sameOwnedEndpoint(endpoint, owned) {
+			continue
+		}
+		if err := b.remover.Remove(ctx, owned, actual, desired); err != nil {
+			return changed, fmt.Errorf("remove endpoint %s: %w", uid, err)
+		}
+		changed = true
+	}
+	return changed, nil
+}
+
+func sameOwnedEndpoint(endpoint resolver.Endpoint, owned reconcile.OwnedEndpoint) bool {
+	return endpoint.Pod.UID == owned.PodUID && endpoint.PodIPv4 == owned.PodIPv4 && endpoint.NetNSInode == owned.NetNSInode &&
+		endpoint.PeerLink.IfIndex == owned.PeerIfIndex && endpoint.HostLink.IfIndex == owned.HostIfIndex
 }
 
 func (b *FirstPassBackend) Verify(ctx context.Context, desired reconcile.DesiredState, _ reconcile.ActualState) error {
