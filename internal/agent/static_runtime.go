@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/cat-cc-Lcos/FNCache/internal/controlplane"
 	"github.com/cat-cc-Lcos/FNCache/internal/datapath"
@@ -77,10 +76,10 @@ func (r *StaticRuntime) RunOnce(ctx context.Context) (reconcile.ReconcileResult,
 	if err != nil {
 		return reconcile.ReconcileResult{}, fmt.Errorf("prepare endpoint links: %w", err)
 	}
-	links := mergeEndpointLinks(r.config.TCLinks, endpoints.Endpoints)
+	links := resolver.MergeEndpointLinks(r.config.TCLinks, endpoints.Endpoints)
 	observer, err := controlplane.NewObserver(r.sources, controlplane.ObservationInput{
 		Generation: r.config.Generation, PreflightRequest: r.config.Preflight, FlannelRequest: r.config.Flannel,
-		MarkerRule: r.config.Marker, Pods: r.config.Pods, TCLinks: links,
+		MarkerRule: r.config.Marker, Pods: r.config.Pods, TCLinks: links, BaseTCLinks: r.config.TCLinks,
 	})
 	if err != nil {
 		return reconcile.ReconcileResult{}, err
@@ -153,33 +152,4 @@ func validateStaticRuntimeConfig(config StaticRuntimeConfig) error {
 		return fmt.Errorf("marker identity is required")
 	}
 	return nil
-}
-
-func mergeEndpointLinks(base []resolver.LinkIdentity, endpoints map[string]resolver.Endpoint) []resolver.LinkIdentity {
-	result := append([]resolver.LinkIdentity(nil), base...)
-	positions := make(map[[2]uint64]int, len(result))
-	for index, link := range result {
-		key := [2]uint64{link.NetNSInode, uint64(link.IfIndex)}
-		if _, ok := positions[key]; !ok {
-			positions[key] = index
-		}
-	}
-	uids := make([]string, 0, len(endpoints))
-	for uid := range endpoints {
-		uids = append(uids, uid)
-	}
-	sort.Strings(uids)
-	for _, uid := range uids {
-		endpoint := endpoints[uid]
-		for _, link := range []resolver.LinkIdentity{endpoint.PeerLink, endpoint.HostLink} {
-			key := [2]uint64{link.NetNSInode, uint64(link.IfIndex)}
-			if index, ok := positions[key]; ok {
-				result[index] = link
-				continue
-			}
-			positions[key] = len(result)
-			result = append(result, link)
-		}
-	}
-	return result
 }

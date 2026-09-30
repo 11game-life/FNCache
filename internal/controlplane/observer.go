@@ -52,6 +52,7 @@ type ObservationInput struct {
 	MarkerRule       flannel.MarkerRuleSpec
 	Pods             []resolver.PodSnapshot
 	TCLinks          []resolver.LinkIdentity
+	BaseTCLinks      []resolver.LinkIdentity
 }
 
 type Observer struct {
@@ -84,6 +85,11 @@ func NewObserver(sources Sources, input ObservationInput) (*Observer, error) {
 	}
 	input.Pods = append([]resolver.PodSnapshot(nil), input.Pods...)
 	input.TCLinks = append([]resolver.LinkIdentity(nil), input.TCLinks...)
+	baseTCLinks := input.BaseTCLinks
+	if baseTCLinks == nil {
+		baseTCLinks = input.TCLinks
+	}
+	input.BaseTCLinks = append([]resolver.LinkIdentity(nil), baseTCLinks...)
 	return &Observer{sources: sources, input: input}, nil
 }
 
@@ -117,6 +123,7 @@ func (o *Observer) Discover(ctx context.Context) (reconcile.DesiredState, error)
 	if err != nil {
 		return reconcile.DesiredState{}, fmt.Errorf("scan endpoints: %w", err)
 	}
+	o.input.TCLinks = resolver.MergeEndpointLinks(o.input.BaseTCLinks, endpoints.Endpoints)
 	for uid, endpoint := range endpoints.Endpoints {
 		desired.LocalEndpoints[uid] = endpoint
 	}

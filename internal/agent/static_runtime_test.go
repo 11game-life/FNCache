@@ -35,7 +35,7 @@ func TestMergeEndpointLinksIsStableAndDeduplicated(t *testing.T) {
 		"b": {PeerLink: resolver.LinkIdentity{IfIndex: 4}, HostLink: resolver.LinkIdentity{IfIndex: 5}},
 		"a": {PeerLink: resolver.LinkIdentity{IfIndex: 3}, HostLink: resolver.LinkIdentity{IfIndex: 4}},
 	}
-	links := mergeEndpointLinks(base, endpoints)
+	links := resolver.MergeEndpointLinks(base, endpoints)
 	if len(links) != 4 || links[1].IfIndex != 3 || links[2].IfIndex != 4 || links[3].IfIndex != 5 {
 		t.Fatalf("unexpected merged links: %+v", links)
 	}
@@ -47,7 +47,7 @@ func TestMergeEndpointLinksRefreshesExistingIdentity(t *testing.T) {
 		PeerLink: resolver.LinkIdentity{NetNSInode: 42, IfIndex: 2, IfName: "eth0", NetNSPath: "/proc/123/ns/net"},
 		HostLink: resolver.LinkIdentity{IfIndex: 5, IfName: "vethweb"},
 	}
-	links := mergeEndpointLinks(base, map[string]resolver.Endpoint{"pod-a": endpoint})
+	links := resolver.MergeEndpointLinks(base, map[string]resolver.Endpoint{"pod-a": endpoint})
 	if len(links) != 2 || links[0].NetNSPath != "/proc/123/ns/net" {
 		t.Fatalf("existing endpoint identity was not refreshed: %+v", links)
 	}
