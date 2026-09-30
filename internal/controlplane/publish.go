@@ -69,8 +69,8 @@ func VerifyState(desired reconcile.DesiredState, actual reconcile.ActualState) e
 	if !desired.Enabled {
 		return fmt.Errorf("cannot publish disabled desired state")
 	}
-	if actual.Control.Enabled {
-		return fmt.Errorf("cannot publish while actual control Map is enabled")
+	if !actual.Control.Verified || actual.Control.Enabled {
+		return fmt.Errorf("cannot publish while actual control Map is enabled or unverified")
 	}
 	if len(actual.Conflicts) != 0 {
 		return fmt.Errorf("cannot publish with %d actual conflicts", len(actual.Conflicts))

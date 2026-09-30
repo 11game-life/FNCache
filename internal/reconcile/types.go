@@ -127,6 +127,7 @@ type OwnershipState struct {
 }
 
 type ControlState struct {
+	Verified       bool
 	Enabled        bool
 	Generation     uint64
 	HeartbeatAt    time.Time
