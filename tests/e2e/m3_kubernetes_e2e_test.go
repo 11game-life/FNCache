@@ -31,6 +31,7 @@ func TestM3KubernetesE2E(t *testing.T) {
 	if err := assertNodesReady(nodeA, nodeB); err != nil {
 		t.Fatal(err)
 	}
+	resetE2ENamespace(t)
 	manifest, err := os.ReadFile("fixtures.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +65,34 @@ func TestM3KubernetesE2E(t *testing.T) {
 	}
 	applyManifest(t, manifest)
 	waitPod(t, "pod-b")
+	newPodBIP := mustOutput(t, "kubectl", "-n", e2eNamespace, "get", "pod", "pod-b", "-o", "jsonpath={.status.podIP}")
+	if newPodBIP != podBIP {
+		t.Logf("PodIP changed during recreate: old=%s new=%s; IP reuse guard remains covered by unit tests", podBIP, newPodBIP)
+	}
+
+	if _, err := run("kubectl", "-n", e2eNamespace, "delete", "pod", "pod-a", "--wait=true"); err != nil {
+		t.Fatal(err)
+	}
+	migrated := bytes.ReplaceAll(manifest, []byte("nodeName: "+nodeA), []byte("nodeName: "+nodeB))
+	applyManifest(t, migrated)
+	waitPod(t, "pod-a")
+	if got := mustOutput(t, "kubectl", "-n", e2eNamespace, "get", "pod", "pod-a", "-o", "jsonpath={.spec.nodeName}"); got != nodeB {
+		t.Fatalf("pod-a did not migrate: node=%s want=%s", got, nodeB)
+	}
+
+	for cycle := 0; cycle < 5; cycle++ {
+		churn := []byte(fmt.Sprintf("apiVersion: v1\nkind: Pod\nmetadata:\n  name: pod-churn\n  namespace: %s\n  labels:\n    app: oncache-churn\nspec:\n  nodeName: %s\n  containers:\n    - name: app\n      image: oncache-agent:m3-e2e\n      command: [\"sh\", \"-c\", \"sleep 3600\"]\n", e2eNamespace, nodeA))
+		applyManifest(t, churn)
+		waitPod(t, "pod-churn")
+		churnIP := mustOutput(t, "kubectl", "-n", e2eNamespace, "get", "pod", "pod-churn", "-o", "jsonpath={.status.podIP}")
+		if _, err := run("kubectl", "-n", e2eNamespace, "exec", "pod-a", "--", "ping", "-c", "1", "-W", "2", churnIP); err != nil {
+			t.Fatalf("churn cycle %d communication failed: %v", cycle, err)
+		}
+		if _, err := run("kubectl", "-n", e2eNamespace, "delete", "pod", "pod-churn", "--wait=true"); err != nil {
+			t.Fatalf("churn cycle %d delete failed: %v", cycle, err)
+		}
+		waitPodDeleted(t, "pod-churn")
+	}
 	captureEvidence(t, evidence)
 }
 
@@ -90,6 +119,23 @@ func waitPod(t *testing.T, name string) {
 	if _, err := run("kubectl", "-n", e2eNamespace, "wait", "--for=condition=Ready", "pod/"+name, "--timeout=120s"); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func resetE2ENamespace(t *testing.T) {
+	t.Helper()
+	_, _ = run("kubectl", "delete", "namespace", e2eNamespace, "--ignore-not-found=true", "--wait=true", "--timeout=120s")
+}
+
+func waitPodDeleted(t *testing.T, name string) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := run("kubectl", "-n", e2eNamespace, "get", "pod", name); err != nil {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("Pod %s was not deleted", name)
 }
 
 func captureEvidence(t *testing.T, dir string) {
