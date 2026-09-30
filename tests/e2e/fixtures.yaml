@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oncache-e2e
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-a
+  namespace: oncache-e2e
+  labels:
+    app: oncache-e2e
+spec:
+  nodeName: NODE_A
+  containers:
+    - name: app
+      image: oncache-agent:m3-e2e
+      command: ["sh", "-c", "sleep 3600"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-b
+  namespace: oncache-e2e
+  labels:
+    app: oncache-e2e
+spec:
+  nodeName: NODE_B
+  containers:
+    - name: app
+      image: oncache-agent:m3-e2e
+      command: ["sh", "-c", "sleep 3600"]

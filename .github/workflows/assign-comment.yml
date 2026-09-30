@@ -1,0 +1,48 @@
+name: Assign on /assign comment
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: none
+  issues: write
+  pull-requests: write
+
+jobs:
+  assign-commenter:
+    if: ${{ github.event.issue.state == 'open' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Assign comment author
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const body = String(context.payload.comment?.body ?? '').trim();
+            if (body !== '/assign') {
+              core.info('Ignoring comment that is not exactly /assign.');
+              return;
+            }
+
+            const assignee = context.payload.comment.user.login;
+
+            try {
+              await github.rest.issues.addAssignees({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                assignees: [assignee],
+              });
+              core.notice(`Assigned @${assignee} to #${context.issue.number}.`);
+            } catch (error) {
+              if (error.status === 404 || error.status === 422) {
+                core.notice(
+                  `GitHub did not allow assigning @${assignee}; no changes were made.`,
+                );
+                return;
+              }
+
+              throw error;
+            }

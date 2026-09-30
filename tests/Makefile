@@ -14,7 +14,7 @@ REDIRECT_OBJ := $(BUILD_DIR)/bpf-fail-redirect/tc_prog_kern.o
 INTEGRATION_BUILD_DIR ?= $(BUILD_DIR)/m2-integration
 INTEGRATION_BPF_OBJ := $(INTEGRATION_BUILD_DIR)/bpf/tc_prog_kern.o
 
-.PHONY: all test test-bpf test-m2-integration test-m2-local-runtime clean
+.PHONY: all test test-bpf test-m2-integration test-m2-local-runtime helm-lint helm-template clean
 
 all: $(TARGET)
 
@@ -71,5 +71,18 @@ test-m2-local-runtime: $(M2_LOCAL_BIN)
 	test -n "$(M2_RUNTIME_UNDERLAY_IFNAME)"
 	$(RUN) env PATH="/opt/oncache/bin:/opt/oncache/sbin:/usr/local/go/bin:/usr/lib/llvm-18/bin:/usr/local/sbin:/usr/sbin:/sbin:$$PATH" ONCACHE_M2_LOCAL=1 ONCACHE_AGENT_BIN="$(abspath $(M2_LOCAL_BIN))" ONCACHE_STATIC_MANIFEST="$(abspath $(M2_RUNTIME_MANIFEST))" ONCACHE_M2_PIN_ROOT="$(M2_RUNTIME_PIN_ROOT)" ONCACHE_M2_STATE_PATH="$(M2_RUNTIME_STATE_PATH)" ONCACHE_M2_MARKER_COMMENT="$(M2_RUNTIME_MARKER_COMMENT)" ONCACHE_M2_UNDERLAY_IFNAME="$(M2_RUNTIME_UNDERLAY_IFNAME)" ONCACHE_M2_CLEANUP="$(M2_RUNTIME_CLEANUP)" "$(GO)" test -tags=integration -count=1 -run '^TestM2LocalStaticRuntime$$' ../tests/integration
 
+HELM ?= helm
+CHART_DIR ?= ../charts/oncache
+
+helm-lint:
+	command -v "$(HELM)" >/dev/null
+	"$(HELM)" lint "$(CHART_DIR)"
+
+helm-template:
+	command -v "$(HELM)" >/dev/null
+	"$(HELM)" template oncache "$(CHART_DIR)"
+
 clean:
 	rm -f "$(TARGET)" "$(BEHAVIOR_TARGET)"
+
+-include Makefile.m3e2e

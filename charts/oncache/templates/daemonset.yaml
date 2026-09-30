@@ -1,0 +1,115 @@
+{{- if .Values.agent.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "oncache.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "oncache.labels" . | nindent 4 }}
+spec:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "oncache.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "oncache.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "oncache.serviceAccountName" . }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}
+      containers:
+        - name: agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.agent.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.agent.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: ONCACHE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: ONCACHE_CONFIG
+              value: /etc/oncache/agent.yaml
+            - name: ONCACHE_INSTALLATION_ID
+              value: {{ default (include "oncache.fullname" .) .Values.agent.installationID | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+          securityContext:
+            privileged: {{ .Values.security.privileged }}
+            readOnlyRootFilesystem: {{ .Values.security.readOnlyRootFilesystem }}
+            capabilities:
+              add:
+                {{- toYaml .Values.security.capabilities.add | nindent 16 }}
+          volumeMounts:
+            - name: bpf
+              mountPath: /sys/fs/bpf
+            - name: run
+              mountPath: /run
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: state
+              mountPath: /var/lib/oncache
+            - name: flannel
+              mountPath: /run/flannel
+              readOnly: true
+            - name: config
+              mountPath: /etc/oncache
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.probes.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+          {{- end }}
+      volumes:
+        - name: bpf
+          hostPath:
+            path: {{ .Values.hostPaths.bpf }}
+            type: Directory
+        - name: run
+          hostPath:
+            path: {{ .Values.hostPaths.run }}
+            type: Directory
+        - name: proc
+          hostPath:
+            path: {{ .Values.hostPaths.proc }}
+            type: Directory
+        - name: state
+          hostPath:
+            path: {{ .Values.hostPaths.state }}
+            type: DirectoryOrCreate
+        - name: flannel
+          hostPath:
+            path: {{ .Values.hostPaths.flannel }}
+            type: Directory
+        - name: config
+          configMap:
+            name: {{ include "oncache.fullname" . }}
+{{- end }}

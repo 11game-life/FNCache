@@ -17,6 +17,18 @@ type fakeTCBackend struct {
 	removed  int
 }
 
+type legacyFakeTCBackend struct {
+	*fakeTCBackend
+	result     TCFilterState
+	recognized bool
+	calls      int
+}
+
+func (b *legacyFakeTCBackend) MigrateLegacyFilter(_ context.Context, _ TCFilterState, _ TCFilterSpec) (TCFilterState, bool, error) {
+	b.calls++
+	return b.result, b.recognized, nil
+}
+
 func (b *fakeTCBackend) EnsureClsact(ctx context.Context, link resolver.LinkIdentity) (TCQdiscState, error) {
 	if err := ctx.Err(); err != nil {
 		return TCQdiscState{}, err
@@ -103,6 +115,48 @@ func TestTCManagerEnsureIsIdempotent(t *testing.T) {
 	}
 	if !sameFilter(first, spec) || !sameFilter(second, spec) || backend.attached != 1 || len(backend.filters) != 1 {
 		t.Fatalf("filter was not reused: first=%+v second=%+v backend=%+v", first, second, backend)
+	}
+}
+
+func TestTCManagerMigratesRecognizedLegacyFilter(t *testing.T) {
+	link := testLink()
+	backend := &legacyFakeTCBackend{
+		fakeTCBackend: &fakeTCBackend{
+			qdisc:   TCQdiscState{Link: link, Exists: true},
+			filters: []TCFilterState{{Link: link, Hook: HookEgress, Program: "tc_init_e_func", ProgramID: 99, Priority: FixedTCPriority, Handle: 0x100, DirectAction: true}},
+		},
+		result:     TCFilterState{Link: link, Hook: HookEgress, Program: "tc_init_e", ProgramID: 10, Priority: FixedTCPriority, Handle: 0x100, DirectAction: true},
+		recognized: true,
+	}
+	manager, err := NewTCManager(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := NewFixedFilter(link, "tc_init_e", 10, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := manager.EnsureFilter(context.Background(), spec)
+	if err != nil || !sameFilter(got, spec) || backend.calls != 1 {
+		t.Fatalf("recognized legacy filter was not migrated: got=%+v err=%v backend=%+v", got, err, backend)
+	}
+}
+
+func TestTCManagerKeepsUnrecognizedLegacyFilterForeign(t *testing.T) {
+	link := testLink()
+	backend := &legacyFakeTCBackend{
+		fakeTCBackend: &fakeTCBackend{
+			qdisc:   TCQdiscState{Link: link, Exists: true},
+			filters: []TCFilterState{{Link: link, Hook: HookEgress, Program: "tc_init_e_func", ProgramID: 99, Priority: FixedTCPriority, Handle: 0x100, DirectAction: true}},
+		},
+		recognized: false,
+	}
+	manager, _ := NewTCManager(backend)
+	spec, _ := NewFixedFilter(link, "tc_init_e", 10, true)
+	_, err := manager.EnsureFilter(context.Background(), spec)
+	var classified *reconcile.ClassifiedError
+	if !errors.As(err, &classified) || classified.ReasonCode() != reconcile.ReasonTCForeignConflict || backend.calls != 1 || backend.attached != 0 {
+		t.Fatalf("unrecognized legacy filter was not kept foreign: err=%v backend=%+v", err, backend)
 	}
 }
 

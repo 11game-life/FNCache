@@ -94,6 +94,7 @@ type DesiredState struct {
 	Enabled         bool
 	Capability      discovery.CapabilityReport
 	Flannel         FlannelState
+	LocalPods       map[string]resolver.PodSnapshot
 	LocalEndpoints  map[string]resolver.Endpoint
 	RemoteEndpoints map[netip.Addr]RemoteEndpoint
 	Datapath        DatapathSpec
@@ -194,11 +195,15 @@ const (
 )
 
 const (
-	ReasonFlannelLinkMissing = "FLANNEL_LINK_MISSING"
-	ReasonBPFABIMismatch     = "BPF_ABI_MISMATCH"
-	ReasonTCForeignConflict  = "TC_FOREIGN_CONFLICT"
-	ReasonEndpointNotReady   = "ENDPOINT_NOT_READY"
-	ReasonNetNSRestoreFailed = "NETNS_RESTORE_FAILED"
+	ReasonFlannelLinkMissing    = "FLANNEL_LINK_MISSING"
+	ReasonBPFABIMismatch        = "BPF_ABI_MISMATCH"
+	ReasonTCForeignConflict     = "TC_FOREIGN_CONFLICT"
+	ReasonEndpointNotReady      = "ENDPOINT_NOT_READY"
+	ReasonNetNSRestoreFailed    = "NETNS_RESTORE_FAILED"
+	ReasonDatapathNotReady      = "DATAPATH_NOT_READY"
+	ReasonCapabilityUnsupported = "CAPABILITY_UNSUPPORTED"
+	ReasonPodIPReusePending     = "POD_IP_REUSE_PENDING"
+	ReasonEndpointIdentityReuse = "ENDPOINT_IDENTITY_REUSE_PENDING"
 )
 
 type ClassifiedError struct {

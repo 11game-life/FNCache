@@ -11,7 +11,6 @@ import (
 	"github.com/cat-cc-Lcos/FNCache/internal/datapath"
 	"github.com/cat-cc-Lcos/FNCache/internal/discovery"
 	"github.com/cat-cc-Lcos/FNCache/internal/overlay/flannel"
-	"github.com/cat-cc-Lcos/FNCache/internal/ownership"
 	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
 	"github.com/cat-cc-Lcos/FNCache/internal/resolver"
 )
@@ -40,12 +39,12 @@ type StaticRuntime struct {
 	pins            *datapath.PinScanner
 	tcScanner       *datapath.TCScanner
 	sources         controlplane.Sources
-	control         *runtimeControl
-	collection      *controlplane.CollectionEnsurer
-	marker          *controlplane.FlannelMarkerEnsurer
-	base            *controlplane.BaseEnsurer
-	endpoint        *controlplane.EndpointEnsurer
-	maps            *controlplane.MapEnsurer
+	control         localControl
+	collection      localCollectionEnsurer
+	marker          localMarkerEnsurer
+	base            localBaseEnsurer
+	endpoint        localEndpointEnsurer
+	maps            localMapEnsurer
 	publisher       *controlplane.Publisher
 }
 
@@ -53,94 +52,19 @@ func NewStaticRuntime(ctx context.Context, config StaticRuntimeConfig) (*StaticR
 	if err := validateStaticRuntimeConfig(config); err != nil {
 		return nil, err
 	}
-	sandbox, cri, err := resolver.DialContainerdCRI(ctx, config.Preflight.RuntimeURI)
-	if err != nil {
-		return nil, err
-	}
-	ok := false
-	defer func() {
-		if !ok {
-			_ = cri.Close()
-		}
-	}()
-
-	netns := datapath.NewNetNSManager()
-	endpointResolver, err := resolver.NewLinuxEndpointResolver(sandbox, func(ctx context.Context, info resolver.SandboxInfo, fn func(context.Context) error) error {
-		return netns.WithNetNS(ctx, datapath.NetNSRef{Path: info.NetNSPath, Inode: info.NetNSInode}, fn)
+	components, err := newDatapathComponents(ctx, datapathComponentConfig{
+		ELFPath: config.ELFPath, PinRoot: config.PinRoot, StatePath: config.StatePath, InstallationID: config.InstallationID,
+		ELFBuildID: config.ELFBuildID, HeartbeatNS: config.HeartbeatNS, HeartbeatTimeoutNS: config.HeartbeatTimeoutNS,
+		Flags: config.Flags, Preflight: config.Preflight, Flannel: config.Flannel, Marker: config.Marker,
 	})
 	if err != nil {
 		return nil, err
 	}
-	endpointScanner, err := resolver.NewEndpointScanner(endpointResolver)
-	if err != nil {
-		return nil, err
-	}
-	pins, err := datapath.NewPinScanner(config.PinRoot)
-	if err != nil {
-		return nil, err
-	}
-	tcBackend, err := datapath.NewLinuxTCBackend(config.PinRoot)
-	if err != nil {
-		return nil, err
-	}
-	tc, err := datapath.NewTCManagerWithNetNS(tcBackend, netns)
-	if err != nil {
-		return nil, err
-	}
-	tcScanner, err := datapath.NewTCScanner(tc)
-	if err != nil {
-		return nil, err
-	}
-	controlWriter, err := datapath.NewControlWriter(config.PinRoot)
-	if err != nil {
-		return nil, err
-	}
-	collection, err := controlplane.NewCollectionEnsurer(config.ELFPath, config.PinRoot)
-	if err != nil {
-		return nil, err
-	}
-	markerManager := flannel.NewMarkerRuleManager(nil)
-	marker, err := controlplane.NewFlannelMarkerEnsurer(markerManager, config.Marker)
-	if err != nil {
-		return nil, err
-	}
-	base, err := controlplane.NewBaseEnsurer(tc)
-	if err != nil {
-		return nil, err
-	}
-	endpoint, err := controlplane.NewEndpointEnsurer(tc)
-	if err != nil {
-		return nil, err
-	}
-	mapWriter, err := datapath.NewMapWriter(config.PinRoot)
-	if err != nil {
-		return nil, err
-	}
-	maps, err := controlplane.NewMapEnsurer(mapWriter)
-	if err != nil {
-		return nil, err
-	}
-	store, err := ownership.NewStore(config.StatePath)
-	if err != nil {
-		return nil, err
-	}
-	publisher, err := controlplane.NewPublisher(store, controlWriter, controlplane.PublishConfig{
-		InstallationID: config.InstallationID, NodeUID: config.Preflight.Node.UID, ELFBuildID: config.ELFBuildID,
-		HeartbeatNS: config.HeartbeatNS, HeartbeatTimeoutNS: config.HeartbeatTimeoutNS, Flags: config.Flags,
-	})
-	if err != nil {
-		return nil, err
-	}
-	preflight := discovery.NewPreflight(discovery.NewLinuxProbe("/"))
-	flannelSource := flannel.NewDiscovery(nil)
-	ruleScanner := flannel.NewRuleScanner(nil)
 	runtime := &StaticRuntime{
-		config: config, cri: cri, endpointScanner: endpointScanner, pins: pins, tcScanner: tcScanner,
-		sources: controlplane.Sources{Preflight: preflight, Flannel: flannelSource, Endpoints: endpointScanner, Pins: pins, TC: tcScanner, Rules: ruleScanner},
-		control: &runtimeControl{pinRoot: config.PinRoot, writer: controlWriter}, collection: collection, marker: marker,
-		base: base, endpoint: endpoint, maps: maps, publisher: publisher,
+		config: config, cri: components.cri, endpointScanner: components.endpointScanner, pins: components.pins, tcScanner: components.tcScanner,
+		sources: components.sources, control: components.control, collection: components.collection, marker: components.marker,
+		base: components.base, endpoint: components.endpoint, maps: components.maps, publisher: components.publisher,
 	}
-	ok = true
 	return runtime, nil
 }
 

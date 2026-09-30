@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/cat-cc-Lcos/FNCache/internal/resolver"
@@ -142,6 +143,70 @@ func (b *linuxTCBackend) AttachFilter(ctx context.Context, spec TCFilterSpec) (T
 		return TCFilterState{}, fmt.Errorf("add BPF filter: %w", err)
 	}
 	return TCFilterState{Link: spec.Link, Hook: spec.Hook, Program: spec.Program, ProgramID: spec.ProgramID, Priority: spec.Priority, Handle: spec.Handle, DirectAction: spec.DirectAction}, nil
+}
+
+func (b *linuxTCBackend) MigrateLegacyFilter(ctx context.Context, current TCFilterState, spec TCFilterSpec) (TCFilterState, bool, error) {
+	legacyName, ok := legacyProgramNames[spec.Program]
+	if !ok || !sameLink(current.Link, spec.Link) || current.Hook != spec.Hook ||
+		current.Priority != spec.Priority || current.Handle != spec.Handle {
+		return TCFilterState{}, false, nil
+	}
+	legacyPath := filepath.Join(b.pinRoot, "programs", legacyName)
+	if _, err := os.Stat(legacyPath); err != nil {
+		if os.IsNotExist(err) {
+			return TCFilterState{}, false, nil
+		}
+		return TCFilterState{}, false, fmt.Errorf("inspect legacy program pin %s: %w", legacyName, err)
+	}
+	legacy, err := b.loader.Load(legacyPath)
+	if err != nil {
+		return TCFilterState{}, false, fmt.Errorf("load legacy pinned program %s: %w", legacyName, err)
+	}
+	defer legacy.Close()
+	legacyID, err := legacy.ProgramID()
+	if err != nil {
+		return TCFilterState{}, false, fmt.Errorf("inspect legacy pinned program %s: %w", legacyName, err)
+	}
+	if legacyID != current.ProgramID {
+		return TCFilterState{}, false, nil
+	}
+
+	currentProgram, err := b.loader.Load(filepath.Join(b.pinRoot, "programs", spec.Program))
+	if err != nil {
+		return TCFilterState{}, true, fmt.Errorf("load current pinned program %s: %w", spec.Program, err)
+	}
+	defer currentProgram.Close()
+	currentID, err := currentProgram.ProgramID()
+	if err != nil {
+		return TCFilterState{}, true, fmt.Errorf("inspect current pinned program %s: %w", spec.Program, err)
+	}
+	if currentID != spec.ProgramID {
+		return TCFilterState{}, true, safetyError("current pinned program identity changed during legacy migration")
+	}
+	parent, err := parentForHook(spec.Hook)
+	if err != nil {
+		return TCFilterState{}, true, err
+	}
+	oldFilter := kernelFilter{
+		LinkIndex: current.Link.IfIndex, Parent: parent, Priority: current.Priority, Handle: current.Handle,
+		Kind: "bpf", Program: current.Program, ProgramID: current.ProgramID, DirectAction: current.DirectAction, FD: -1,
+	}
+	if err := b.api.deleteFilter(ctx, spec.Link, oldFilter); err != nil {
+		return TCFilterState{}, true, fmt.Errorf("remove legacy BPF filter %s: %w", legacyName, err)
+	}
+	newFilter := kernelFilter{
+		LinkIndex: spec.Link.IfIndex, Parent: parent, Priority: spec.Priority, Handle: spec.Handle,
+		Kind: "bpf", Program: spec.Program, ProgramID: spec.ProgramID, DirectAction: spec.DirectAction, FD: currentProgram.FD(),
+	}
+	if err := b.api.addFilter(ctx, spec.Link, newFilter); err != nil {
+		restore := oldFilter
+		restore.FD = legacy.FD()
+		if restoreErr := b.api.addFilter(ctx, spec.Link, restore); restoreErr != nil {
+			return TCFilterState{}, true, safetyError(fmt.Sprintf("legacy BPF filter migration failed and rollback failed: migrate=%v rollback=%v", err, restoreErr))
+		}
+		return TCFilterState{}, true, fmt.Errorf("attach migrated BPF filter %s: %w", spec.Program, err)
+	}
+	return TCFilterState{Link: spec.Link, Hook: spec.Hook, Program: spec.Program, ProgramID: spec.ProgramID, Priority: spec.Priority, Handle: spec.Handle, DirectAction: spec.DirectAction}, true, nil
 }
 
 func (b *linuxTCBackend) RemoveFilter(ctx context.Context, spec TCFilterSpec) error {

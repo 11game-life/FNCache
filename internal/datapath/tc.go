@@ -49,6 +49,10 @@ type TCBackend interface {
 	RemoveFilter(context.Context, TCFilterSpec) error
 }
 
+type legacyFilterMigrator interface {
+	MigrateLegacyFilter(context.Context, TCFilterState, TCFilterSpec) (TCFilterState, bool, error)
+}
+
 type TCManager struct {
 	backend TCBackend
 	netns   *NetNSManager
@@ -64,6 +68,13 @@ var fixedAttachments = map[string]fixedAttachment{
 	"tc_restore": {hook: HookIngress, handle: 0x101},
 	"tc_masq":    {hook: HookIngress, handle: 0x200},
 	"tc_init_in": {hook: HookIngress, handle: 0x201},
+}
+
+var legacyProgramNames = map[string]string{
+	"tc_init_e":  "tc_init_e_func",
+	"tc_restore": "tc_restore_func",
+	"tc_masq":    "tc_masq_func",
+	"tc_init_in": "tc_init_in_func",
 }
 
 func NewTCManager(backend TCBackend) (*TCManager, error) {
@@ -147,6 +158,19 @@ func (m *TCManager) EnsureFilter(ctx context.Context, spec TCFilterSpec) (TCFilt
 				if sameFilter(current, spec) {
 					result = current
 					return nil
+				}
+				if migrator, ok := m.backend.(legacyFilterMigrator); ok {
+					migrated, recognized, err := migrator.MigrateLegacyFilter(ctx, current, spec)
+					if err != nil {
+						return err
+					}
+					if recognized {
+						if !sameFilter(migrated, spec) {
+							return safetyError("legacy TC migration returned an unexpected filter identity")
+						}
+						result = migrated
+						return nil
+					}
 				}
 				return foreignConflict("fixed TC handle is occupied by another filter")
 			}
@@ -243,7 +267,7 @@ func validateLink(link resolver.LinkIdentity) error {
 
 func sameFilter(current TCFilterState, expected TCFilterSpec) bool {
 	return sameLink(current.Link, expected.Link) && current.Hook == expected.Hook &&
-		current.ProgramID == expected.ProgramID && current.Priority == expected.Priority &&
+		current.Program == expected.Program && current.ProgramID == expected.ProgramID && current.Priority == expected.Priority &&
 		current.Handle == expected.Handle && current.DirectAction == expected.DirectAction
 }
 
