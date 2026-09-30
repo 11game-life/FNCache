@@ -6,6 +6,8 @@ Thank you for contributing to FNCache. The project is experimental and primarily
 
 1. Search existing Issues and pull requests to avoid duplicate work.
 2. Open an Issue for a bug or feature, describing its scope and acceptance criteria.
+   You may create an Issue yourself, or claim an existing one by commenting `/assign`.
+   Wait for maintainer confirmation after claiming to avoid duplicate work.
 3. Create an independent branch from the latest master.
 4. Implement only the current Issue goal. Do not include unrelated refactoring or fixes.
 5. Run checks and tests relevant to the change.
