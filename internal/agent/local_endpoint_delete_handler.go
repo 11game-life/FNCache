@@ -16,7 +16,7 @@ type localOwnershipSource interface {
 }
 
 type localEndpointRemover interface {
-	Remove(context.Context, reconcile.OwnedEndpoint, reconcile.ActualState) error
+	Remove(context.Context, reconcile.OwnedEndpoint, reconcile.ActualState, reconcile.DesiredState) error
 }
 
 type localEndpointReuseGuard interface {
@@ -68,26 +68,19 @@ func (h *LocalEndpointDeleteHandler) Handle(ctx context.Context, key reconcile.R
 	if !ok {
 		return nil
 	}
-	if err := h.config.ReuseGuard.Check(ctx, snapshot, key.UID, owned); err != nil {
+	if err := h.config.ReuseGuard.Check(ctx, snapshot, key.UID, owned); err != nil && !isKnownEndpointReuse(err) {
 		return err
 	}
 	if err := h.config.Control.Disable(ctx); err != nil {
 		return fmt.Errorf("disable fast path: %w", err)
 	}
 	snapshot = h.config.Store.Snapshot()
-	if err := h.config.ReuseGuard.Check(ctx, snapshot, key.UID, owned); err != nil {
+	if err := h.config.ReuseGuard.Check(ctx, snapshot, key.UID, owned); err != nil && !isKnownEndpointReuse(err) {
 		return err
 	}
 	actual, err := h.config.Scanner.Scan(ctx)
 	if err != nil {
 		return fmt.Errorf("scan before local endpoint removal: %w", err)
-	}
-	if err := h.config.Remover.Remove(ctx, owned, actual); err != nil {
-		return fmt.Errorf("remove local endpoint: %w", err)
-	}
-	actual, err = h.config.Scanner.Scan(ctx)
-	if err != nil {
-		return fmt.Errorf("scan after local endpoint removal: %w", err)
 	}
 	base, err := h.config.Desired.Desired(ctx)
 	if err != nil {
@@ -103,8 +96,23 @@ func (h *LocalEndpointDeleteHandler) Handle(ctx context.Context, key reconcile.R
 	if err != nil {
 		return fmt.Errorf("build desired state after local endpoint removal: %w", err)
 	}
+	if err := h.config.Remover.Remove(ctx, owned, actual, desired); err != nil {
+		return fmt.Errorf("remove local endpoint: %w", err)
+	}
+	actual, err = h.config.Scanner.Scan(ctx)
+	if err != nil {
+		return fmt.Errorf("scan after local endpoint removal: %w", err)
+	}
 	if err := h.config.Publisher.CommitAndPublish(ctx, desired, actual); err != nil {
 		return fmt.Errorf("publish local endpoint removal: %w", err)
 	}
 	return nil
+}
+
+func isKnownEndpointReuse(err error) bool {
+	var classified *reconcile.ClassifiedError
+	if !errors.As(err, &classified) {
+		return false
+	}
+	return classified.ReasonCode() == reconcile.ReasonPodIPReusePending || classified.ReasonCode() == reconcile.ReasonEndpointIdentityReuse
 }

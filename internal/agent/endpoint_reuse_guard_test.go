@@ -56,7 +56,7 @@ func TestEndpointReuseGuardAllowsDifferentIdentity(t *testing.T) {
 	}
 }
 
-func TestEndpointReuseGuardDefersUnreadyCandidate(t *testing.T) {
+func TestEndpointReuseGuardRetriesUnreadyCandidate(t *testing.T) {
 	owned := reuseOwned()
 	pod := handlerPod()
 	pod.Identity.UID = "pod-new"
@@ -65,7 +65,7 @@ func TestEndpointReuseGuardDefersUnreadyCandidate(t *testing.T) {
 	guard, _ := NewEndpointReuseGuard(&localHandlerResolver{err: resolver.ErrEndpointNotReady, events: &events}, "node-a")
 	var classified *reconcile.ClassifiedError
 	err := guard.Check(context.Background(), reuseSnapshot(pod), owned.PodUID, owned)
-	if !errors.As(err, &classified) || classified.ReasonCode() != reconcile.ReasonEndpointIdentityReuse {
-		t.Fatalf("unready candidate was not deferred: %v", err)
+	if !errors.As(err, &classified) || classified.ReasonCode() != reconcile.ReasonEndpointNotReady {
+		t.Fatalf("unready candidate was not classified as not ready: %v", err)
 	}
 }

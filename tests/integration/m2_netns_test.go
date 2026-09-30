@@ -422,6 +422,10 @@ func newFirstPassRuntime(t *testing.T, elf, pinRoot, statePath string, desired r
 	if err != nil {
 		t.Fatal(err)
 	}
+	remover, err := controlplane.NewEndpointRemover(mapWriter, tc)
+	if err != nil {
+		t.Fatal(err)
+	}
 	store, err := ownership.NewStore(statePath)
 	if err != nil {
 		t.Fatal(err)
@@ -435,7 +439,7 @@ func newFirstPassRuntime(t *testing.T, elf, pinRoot, statePath string, desired r
 	}
 	firstPass, err := controlplane.NewFirstPassBackend(controlplane.FirstPassBackendConfig{
 		Observer: observer, Control: control, Collection: &pinnedCollectionEnsurer{elf: elf, pinRoot: pinRoot},
-		Marker: staticMarkerEnsurer{}, Base: base, Endpoint: endpoint, Maps: maps, Publisher: publisher,
+		Marker: staticMarkerEnsurer{}, Base: base, Endpoint: endpoint, Maps: maps, Ownership: store, Remover: remover, Publisher: publisher,
 	})
 	if err != nil {
 		t.Fatal(err)

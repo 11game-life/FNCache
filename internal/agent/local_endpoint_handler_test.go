@@ -68,6 +68,19 @@ func (m *localHandlerMaps) EnsureEndpointMaps(context.Context, reconcile.Desired
 	return true, nil
 }
 
+type localHandlerRemover struct{}
+
+func (localHandlerRemover) Remove(context.Context, reconcile.OwnedEndpoint, reconcile.ActualState, reconcile.DesiredState) error {
+	return nil
+}
+
+type recordingLocalHandlerRemover struct{ calls int }
+
+func (r *recordingLocalHandlerRemover) Remove(context.Context, reconcile.OwnedEndpoint, reconcile.ActualState, reconcile.DesiredState) error {
+	r.calls++
+	return nil
+}
+
 type localHandlerPublisher struct {
 	desired reconcile.DesiredState
 	events  *[]string
@@ -103,7 +116,7 @@ func TestLocalEndpointHandlerCreatesAndPublishesEndpoint(t *testing.T) {
 	}
 	base := reconcile.DesiredState{Enabled: true, Capability: discovery.CapabilityReport{Supported: true}, LocalEndpoints: map[string]resolver.Endpoint{"pod-old": handlerEndpoint("pod-old")}}
 	publisher := &localHandlerPublisher{events: &events}
-	handler, err := NewLocalEndpointHandler(LocalEndpointHandlerConfig{Store: store, Resolver: &localHandlerResolver{endpoint: handlerEndpoint("pod-1"), events: &events}, LocalNode: "node-a", Desired: &localHandlerDesired{desired: base, events: &events}, Scanner: &localHandlerScanner{events: &events}, Control: &localHandlerControl{events: &events}, Endpoint: &localHandlerEndpoint{events: &events}, Maps: &localHandlerMaps{events: &events}, Publisher: publisher})
+	handler, err := NewLocalEndpointHandler(LocalEndpointHandlerConfig{Store: store, Resolver: &localHandlerResolver{endpoint: handlerEndpoint("pod-1"), events: &events}, LocalNode: "node-a", Desired: &localHandlerDesired{desired: base, events: &events}, Scanner: &localHandlerScanner{events: &events}, Control: &localHandlerControl{events: &events}, Endpoint: &localHandlerEndpoint{events: &events}, Maps: &localHandlerMaps{events: &events}, Remover: localHandlerRemover{}, Publisher: publisher})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +137,7 @@ func TestLocalEndpointHandlerClassifiesNotReadyAndSkipsInvalidPod(t *testing.T) 
 	pod := handlerPod()
 	_ = store.UpsertPod(pod)
 	events := []string{}
-	handler, _ := NewLocalEndpointHandler(LocalEndpointHandlerConfig{Store: store, Resolver: &localHandlerResolver{err: resolver.ErrEndpointNotReady, events: &events}, LocalNode: "node-a", Desired: &localHandlerDesired{events: &events}, Scanner: &localHandlerScanner{events: &events}, Control: &localHandlerControl{events: &events}, Endpoint: &localHandlerEndpoint{events: &events}, Maps: &localHandlerMaps{events: &events}, Publisher: &localHandlerPublisher{events: &events}})
+	handler, _ := NewLocalEndpointHandler(LocalEndpointHandlerConfig{Store: store, Resolver: &localHandlerResolver{err: resolver.ErrEndpointNotReady, events: &events}, LocalNode: "node-a", Desired: &localHandlerDesired{events: &events}, Scanner: &localHandlerScanner{events: &events}, Control: &localHandlerControl{events: &events}, Endpoint: &localHandlerEndpoint{events: &events}, Maps: &localHandlerMaps{events: &events}, Remover: localHandlerRemover{}, Publisher: &localHandlerPublisher{events: &events}})
 	err := handler.Handle(context.Background(), reconcile.ReconcileKey{Kind: reconcile.ReconcileLocalEndpoint, UID: "pod-1"})
 	var classified *reconcile.ClassifiedError
 	if !errors.As(err, &classified) || classified.Class() != reconcile.ErrorRetryable || len(events) != 1 {
@@ -137,5 +150,38 @@ func TestLocalEndpointHandlerClassifiesNotReadyAndSkipsInvalidPod(t *testing.T) 
 	}
 	if len(events) != 1 {
 		t.Fatalf("invalid Pod triggered operations: %v", events)
+	}
+}
+
+func TestLocalEndpointHandlerCleansSameUIDIdentityChange(t *testing.T) {
+	store := kube.NewSnapshotStore()
+	if err := store.UpsertNode(kube.NodeSnapshot{Identity: resolver.NodeIdentity{Name: "node-a", UID: "node-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertPod(handlerPod()); err != nil {
+		t.Fatal(err)
+	}
+	old := handlerEndpoint("pod-1")
+	current := old
+	current.PodIPv4 = netip.MustParseAddr("10.42.0.9")
+	current.NetNSInode = 99
+	current.PeerLink = resolver.LinkIdentity{NetNSInode: 99, IfIndex: 12, IfName: "eth0", MAC: []byte{2, 0, 0, 0, 0, 9}}
+	current.HostLink = resolver.LinkIdentity{IfIndex: 13, IfName: "vethweb-new", MAC: []byte{2, 0, 0, 0, 0, 8}}
+	events := []string{}
+	remover := &recordingLocalHandlerRemover{}
+	scanner := &localHandlerScanner{events: &events}
+	handler, err := NewLocalEndpointHandler(LocalEndpointHandlerConfig{
+		Store: store, Resolver: &localHandlerResolver{endpoint: current, events: &events}, LocalNode: "node-a",
+		Desired: &localHandlerDesired{desired: reconcile.DesiredState{Enabled: true, Capability: discovery.CapabilityReport{Supported: true}, LocalEndpoints: map[string]resolver.Endpoint{"pod-1": old}}, events: &events},
+		Scanner: scanner, Control: &localHandlerControl{events: &events}, Endpoint: &localHandlerEndpoint{events: &events}, Maps: &localHandlerMaps{events: &events}, Remover: remover, Publisher: &localHandlerPublisher{events: &events},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.Handle(context.Background(), reconcile.ReconcileKey{Kind: reconcile.ReconcileLocalEndpoint, UID: "pod-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if remover.calls != 1 || scanner.calls != 3 {
+		t.Fatalf("same-UID identity change did not refresh state after cleanup: remover=%d scans=%d events=%v", remover.calls, scanner.calls, events)
 	}
 }
