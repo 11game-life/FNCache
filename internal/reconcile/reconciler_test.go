@@ -116,6 +116,37 @@ func TestCoordinatorHonorsCancellationBeforeStart(t *testing.T) {
 	}
 }
 
+type cancelOnSecondErrContext struct {
+	context.Context
+	errCalls int
+}
+
+func (c *cancelOnSecondErrContext) Err() error {
+	c.errCalls++
+	if c.errCalls >= 2 {
+		return context.Canceled
+	}
+	return c.Context.Err()
+}
+
+func TestCoordinatorReportsDegradedWhenDisableIsSkipped(t *testing.T) {
+	backend := &fakeBackend{}
+	coordinator, _ := NewCoordinator(backend)
+	result, err := coordinator.FullReconcile(&cancelOnSecondErrContext{Context: context.Background()})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(backend.steps) != 0 {
+		t.Fatalf("Disable was unexpectedly called: %v", backend.steps)
+	}
+	if len(result.Actions) != 1 || result.Actions[0].Name != "disable" || result.Actions[0].Completed {
+		t.Fatalf("unexpected disable action: %+v", result.Actions)
+	}
+	if result.State != AgentDegraded || coordinator.State() != AgentDegraded {
+		t.Fatalf("skipped Disable did not report Degraded: result=%+v state=%s", result, coordinator.State())
+	}
+}
+
 func TestCoordinatorStopsAfterEveryFailedStage(t *testing.T) {
 	stages := []string{"disable", "discover", "scan", "ensure", "verify", "commit", "publish"}
 	for _, failedStage := range stages {
@@ -126,8 +157,12 @@ func TestCoordinatorStopsAfterEveryFailedStage(t *testing.T) {
 				t.Fatal(err)
 			}
 			result, err := coordinator.FullReconcile(context.Background())
-			if err == nil || result.State != AgentDisabled || coordinator.State() != AgentDisabled {
-				t.Fatalf("failed reconcile was not disabled: result=%+v err=%v", result, err)
+			wantState := AgentDisabled
+			if failedStage == "disable" {
+				wantState = AgentDegraded
+			}
+			if err == nil || result.State != wantState || coordinator.State() != wantState {
+				t.Fatalf("failed reconcile state mismatch: result=%+v err=%v state=%s want=%s", result, err, coordinator.State(), wantState)
 			}
 			for i, stage := range backend.steps {
 				if stage == failedStage {
