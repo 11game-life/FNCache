@@ -176,3 +176,35 @@ func TestFirstPassBackendCleansRemovedAndReplacedOwnedEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestFirstPassBackendRefreshesOwnershipAfterBuildMismatch(t *testing.T) {
+	desired := publishTestDesired()
+	store := &fakeOwnershipCommitter{events: new([]string), state: reconcile.OwnershipState{
+		SchemaVersion: 1, InstallationID: "install-a", NodeUID: "node-a", ELFBuildID: "old-build", ABI: reconcile.BPFABIVersion,
+		Endpoints: map[string]reconcile.OwnedEndpoint{"pod-old": {PodUID: "pod-old", PodIPv4: netip.MustParseAddr("10.244.1.11"), NetNSInode: 43, PeerIfIndex: 11, HostIfIndex: 21}},
+	}}
+	publisher, err := NewPublisher(store, &fakeControlPublisher{events: store.events}, publishTestConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	remover := &backendRemover{}
+	backend, err := NewFirstPassBackend(FirstPassBackendConfig{
+		Observer: &backendObserver{desired: desired, actual: publishTestActual(desired)}, Control: &backendControl{},
+		Collection: &backendCollection{}, Marker: &backendMarker{}, Base: &backendEnsurer{}, Endpoint: &backendEnsurer{}, Maps: &backendEnsurer{},
+		Ownership: store, Remover: remover, Publisher: publisher,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := reconcile.NewCoordinator(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := coordinator.FullReconcile(context.Background())
+	if err != nil || result.State != reconcile.AgentReady {
+		t.Fatalf("build mismatch prevented recovery: result=%+v err=%v", result, err)
+	}
+	if remover.calls != 0 || store.state.ELFBuildID != publishTestConfig().ELFBuildID || store.state.ABI != reconcile.BPFABIVersion {
+		t.Fatalf("ownership was not refreshed safely: remover=%d state=%+v", remover.calls, store.state)
+	}
+}

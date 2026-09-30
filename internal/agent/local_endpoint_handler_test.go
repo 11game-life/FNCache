@@ -169,10 +169,11 @@ func TestLocalEndpointHandlerCleansSameUIDIdentityChange(t *testing.T) {
 	current.HostLink = resolver.LinkIdentity{IfIndex: 13, IfName: "vethweb-new", MAC: []byte{2, 0, 0, 0, 0, 8}}
 	events := []string{}
 	remover := &recordingLocalHandlerRemover{}
+	scanner := &localHandlerScanner{events: &events}
 	handler, err := NewLocalEndpointHandler(LocalEndpointHandlerConfig{
 		Store: store, Resolver: &localHandlerResolver{endpoint: current, events: &events}, LocalNode: "node-a",
 		Desired: &localHandlerDesired{desired: reconcile.DesiredState{Enabled: true, Capability: discovery.CapabilityReport{Supported: true}, LocalEndpoints: map[string]resolver.Endpoint{"pod-1": old}}, events: &events},
-		Scanner: &localHandlerScanner{events: &events}, Control: &localHandlerControl{events: &events}, Endpoint: &localHandlerEndpoint{events: &events}, Maps: &localHandlerMaps{events: &events}, Remover: remover, Publisher: &localHandlerPublisher{events: &events},
+		Scanner: scanner, Control: &localHandlerControl{events: &events}, Endpoint: &localHandlerEndpoint{events: &events}, Maps: &localHandlerMaps{events: &events}, Remover: remover, Publisher: &localHandlerPublisher{events: &events},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +181,7 @@ func TestLocalEndpointHandlerCleansSameUIDIdentityChange(t *testing.T) {
 	if err := handler.Handle(context.Background(), reconcile.ReconcileKey{Kind: reconcile.ReconcileLocalEndpoint, UID: "pod-1"}); err != nil {
 		t.Fatal(err)
 	}
-	if remover.calls != 1 {
-		t.Fatalf("same-UID identity change did not clean the old endpoint: calls=%d events=%v", remover.calls, events)
+	if remover.calls != 1 || scanner.calls != 3 {
+		t.Fatalf("same-UID identity change did not refresh state after cleanup: remover=%d scans=%d events=%v", remover.calls, scanner.calls, events)
 	}
 }

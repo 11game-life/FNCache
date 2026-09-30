@@ -73,6 +73,10 @@ func (r *EndpointRemover) Remove(ctx context.Context, owned reconcile.OwnedEndpo
 }
 
 func desiredClaimsEndpointLink(desired reconcile.DesiredState, actual reconcile.ActualState, owned reconcile.OwnedEndpoint, program string, ifindex int, netnsInode uint64) bool {
+	programState, ok := actual.Programs[program]
+	if !ok || programState.ID == 0 {
+		return false
+	}
 	for uid, endpoint := range desired.LocalEndpoints {
 		if uid == owned.PodUID {
 			continue
@@ -89,7 +93,7 @@ func desiredClaimsEndpointLink(desired reconcile.DesiredState, actual reconcile.
 			continue
 		}
 		for _, attachment := range actual.Attachments {
-			if attachment.Program == program && attachment.Hook == string(identity.Hook) && attachment.Priority == identity.Priority && attachment.Handle == identity.Handle && sameLinkIdentity(attachment.Link, link) {
+			if attachment.Program == program && attachment.ProgramID == programState.ID && attachment.Hook == string(identity.Hook) && attachment.Priority == identity.Priority && attachment.Handle == identity.Handle && sameLinkIdentity(attachment.Link, link) {
 				return true
 			}
 		}

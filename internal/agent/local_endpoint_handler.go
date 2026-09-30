@@ -105,6 +105,10 @@ func (h *LocalEndpointHandler) Handle(ctx context.Context, key reconcile.Reconci
 		if err := h.config.Remover.Remove(ctx, ownedEndpointFromResolver(previous), actual, desired); err != nil {
 			return fmt.Errorf("remove previous local endpoint identity: %w", err)
 		}
+		actual, err = h.config.Scanner.Scan(ctx)
+		if err != nil {
+			return fmt.Errorf("scan after previous endpoint removal: %w", err)
+		}
 	}
 	if _, err := h.config.Endpoint.EnsureEndpoint(ctx, desired, actual, endpoint); err != nil {
 		return fmt.Errorf("ensure local endpoint: %w", err)

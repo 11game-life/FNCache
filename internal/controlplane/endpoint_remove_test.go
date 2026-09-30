@@ -97,7 +97,9 @@ func TestEndpointRemoverProtectsReusedIPAndHostLink(t *testing.T) {
 			PeerLink: resolver.LinkIdentity{NetNSInode: 99, IfIndex: 9}, HostLink: resolver.LinkIdentity{IfIndex: 8},
 		},
 	}}
-	if err := remover.Remove(context.Background(), ownedEndpoint(), reconcile.ActualState{Attachments: endpointAttachments()}, desired); err != nil {
+	if err := remover.Remove(context.Background(), ownedEndpoint(), reconcile.ActualState{
+		Programs: map[string]reconcile.ProgramState{"tc_init_in": {ID: 11}, "tc_masq": {ID: 12}}, Attachments: endpointAttachments(),
+	}, desired); err != nil {
 		t.Fatal(err)
 	}
 	if len(maps.calls) != 1 || maps.calls[0] != "clear:policy_cache" {
@@ -105,5 +107,27 @@ func TestEndpointRemoverProtectsReusedIPAndHostLink(t *testing.T) {
 	}
 	if len(tc.specs) != 1 || tc.specs[0].Program != "tc_init_in" {
 		t.Fatalf("reused host filter was deleted: specs=%+v", tc.specs)
+	}
+}
+
+func TestEndpointRemoverDoesNotProtectOldProgramID(t *testing.T) {
+	maps := &fakeEndpointMaps{}
+	tc := &fakeEndpointTC{}
+	remover, _ := NewEndpointRemover(maps, tc)
+	desired := reconcile.DesiredState{LocalEndpoints: map[string]resolver.Endpoint{
+		"pod-new": {
+			Pod: resolver.PodIdentity{UID: "pod-new"}, PodIPv4: netip.MustParseAddr("10.42.0.2"), NetNSInode: 42,
+			PeerLink: resolver.LinkIdentity{NetNSInode: 42, IfIndex: 7}, HostLink: resolver.LinkIdentity{IfIndex: 8},
+		},
+	}}
+	actual := reconcile.ActualState{
+		Programs:    map[string]reconcile.ProgramState{"tc_init_in": {ID: 101}, "tc_masq": {ID: 102}},
+		Attachments: endpointAttachments(),
+	}
+	if err := remover.Remove(context.Background(), ownedEndpoint(), actual, desired); err != nil {
+		t.Fatal(err)
+	}
+	if len(maps.calls) != 1 || maps.calls[0] != "clear:policy_cache" || len(tc.specs) != 2 {
+		t.Fatalf("old program filters were protected: maps=%v specs=%+v", maps.calls, tc.specs)
 	}
 }

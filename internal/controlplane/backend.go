@@ -192,8 +192,11 @@ func (b *FirstPassBackend) cleanupStaleEndpoints(ctx context.Context, desired re
 	if len(state.Endpoints) == 0 {
 		return false, nil
 	}
-	if state.InstallationID != b.publisher.config.InstallationID || state.NodeUID != b.publisher.config.NodeUID || state.ELFBuildID != b.publisher.config.ELFBuildID || state.ABI != reconcile.BPFABIVersion {
+	if state.InstallationID != b.publisher.config.InstallationID || state.NodeUID != b.publisher.config.NodeUID {
 		return false, fmt.Errorf("ownership state identity does not match the active datapath")
+	}
+	if state.ELFBuildID != b.publisher.config.ELFBuildID || state.ABI != reconcile.BPFABIVersion {
+		return false, nil
 	}
 
 	uids := make([]string, 0, len(state.Endpoints))
