@@ -23,7 +23,7 @@ func TestM3KubernetesE2E(t *testing.T) {
 	nodeA := requiredEnv(t, "ONCACHE_M3_E2E_NODE_A")
 	nodeB := requiredEnv(t, "ONCACHE_M3_E2E_NODE_B")
 	image := requiredEnv(t, "ONCACHE_M3_E2E_IMAGE")
-	chart := getenv("ONCACHE_M3_E2E_CHART", "charts/oncache")
+	chart := getenv("ONCACHE_M3_E2E_CHART", "../../charts/oncache")
 	evidence := getenv("ONCACHE_M3_E2E_EVIDENCE", filepath.Join(os.TempDir(), "oncache-m3-e2e"))
 	if err := os.MkdirAll(evidence, 0750); err != nil {
 		t.Fatal(err)
@@ -31,7 +31,7 @@ func TestM3KubernetesE2E(t *testing.T) {
 	if err := assertNodesReady(nodeA, nodeB); err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := os.ReadFile(filepath.Join("tests", "e2e", "fixtures.yaml"))
+	manifest, err := os.ReadFile("fixtures.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +44,9 @@ func TestM3KubernetesE2E(t *testing.T) {
 	repository, tag := splitImage(image)
 	_, err = run("helm", "upgrade", "--install", "oncache-e2e", chart, "--namespace", "kube-system", "--set", "image.repository="+repository, "--set", "image.tag="+tag, "--set", "agent.installationID=m3-e2e")
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run("kubectl", "-n", "kube-system", "rollout", "restart", "daemonset/oncache-e2e-oncache"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := run("kubectl", "-n", "kube-system", "rollout", "status", "daemonset/oncache-e2e-oncache", "--timeout=180s"); err != nil {
@@ -100,6 +103,24 @@ func captureEvidence(t *testing.T, dir string) {
 		output, err := run(args[0], args[1:]...)
 		if writeErr := os.WriteFile(filepath.Join(dir, name), []byte(output), 0600); err != nil || writeErr != nil {
 			t.Logf("evidence %s unavailable: command=%v err=%v write=%v", name, args, err, writeErr)
+		}
+	}
+	pods, err := run("kubectl", "-n", "kube-system", "get", "pods", "-l", "app.kubernetes.io/name=oncache", "-o", "name")
+	if err != nil {
+		return
+	}
+	for _, pod := range strings.Fields(pods) {
+		name := strings.TrimPrefix(pod, "pod/")
+		for suffix, args := range map[string][]string{
+			"log":      {"kubectl", "-n", "kube-system", "logs", pod, "--all-containers", "--prefix"},
+			"bpftool":  {"kubectl", "-n", "kube-system", "exec", pod, "--", "bpftool", "prog", "show"},
+			"tc.json":  {"kubectl", "-n", "kube-system", "exec", pod, "--", "tc", "-j", "qdisc", "show"},
+			"iptables": {"kubectl", "-n", "kube-system", "exec", pod, "--", "iptables-nft", "-t", "mangle", "-S"},
+		} {
+			output, commandErr := run(args[0], args[1:]...)
+			if writeErr := os.WriteFile(filepath.Join(dir, name+"-"+suffix+".txt"), []byte(output), 0600); commandErr != nil || writeErr != nil {
+				t.Logf("agent evidence %s/%s unavailable: command=%v err=%v write=%v", name, suffix, args, commandErr, writeErr)
+			}
 		}
 	}
 }

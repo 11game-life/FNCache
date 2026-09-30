@@ -1,7 +1,7 @@
 FROM ubuntu:22.04
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates iproute2 iptables bpftool \
+    && apt-get install -y --no-install-recommends ca-certificates iproute2 iptables iputils-ping linux-tools-generic \
     && rm -rf /var/lib/apt/lists/*
 
 COPY oncache-agent /oncache-agent

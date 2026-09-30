@@ -23,8 +23,8 @@ data:
     markers:
       chain: {{ .Values.config.markers.chain | quote }}
       comment: {{ default (printf "oncache:%s" .Release.Name) .Values.config.markers.comment | quote }}
-      missMask: {{ .Values.config.markers.missMask | quote }}
-      establishedMask: {{ .Values.config.markers.establishedMask | quote }}
+      missMask: {{ .Values.config.markers.missMask }}
+      establishedMask: {{ .Values.config.markers.establishedMask }}
     heartbeat:
       interval: {{ .Values.config.heartbeat.interval | quote }}
       timeout: {{ .Values.config.heartbeat.timeout | quote }}
