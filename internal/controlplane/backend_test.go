@@ -130,7 +130,7 @@ func TestFirstPassBackendLeavesUnsupportedNodeDisabled(t *testing.T) {
 	}
 	backend, err := NewFirstPassBackend(FirstPassBackendConfig{
 		Observer: observer, Control: control, Collection: collection, Marker: marker,
-		Base: base, Endpoint: endpoint, Maps: maps, Publisher: publisher,
+		Base: base, Endpoint: endpoint, Maps: maps, Ownership: store, Remover: &backendRemover{}, Publisher: publisher,
 	})
 	if err != nil {
 		t.Fatal(err)
