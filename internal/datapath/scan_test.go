@@ -11,12 +11,14 @@ import (
 )
 
 type fakePinBackend struct {
-	names    map[string][]string
-	maps     map[string]reconcile.MapState
-	programs map[string]reconcile.ProgramState
-	listErr  error
-	mapErr   error
-	progErr  error
+	names      map[string][]string
+	maps       map[string]reconcile.MapState
+	control    reconcile.ControlState
+	programs   map[string]reconcile.ProgramState
+	listErr    error
+	mapErr     error
+	controlErr error
+	progErr    error
 }
 
 func (f *fakePinBackend) List(path string) ([]string, error) {
@@ -30,6 +32,12 @@ func (f *fakePinBackend) InspectMap(path string, _ MapSchema) (reconcile.MapStat
 		return reconcile.MapState{}, f.mapErr
 	}
 	return f.maps[filepath.Base(path)], nil
+}
+func (f *fakePinBackend) InspectControl(string) (reconcile.ControlState, error) {
+	if f.controlErr != nil {
+		return reconcile.ControlState{}, f.controlErr
+	}
+	return f.control, nil
 }
 func (f *fakePinBackend) InspectProgram(path, _ string) (reconcile.ProgramState, error) {
 	if f.progErr != nil {
@@ -51,10 +59,11 @@ func TestPinScannerCollectsObjectsAndOrphans(t *testing.T) {
 	backend := &fakePinBackend{
 		names:    map[string][]string{"maps": {"control_map", "foreign_map"}, "programs": {"tc_masq"}},
 		maps:     map[string]reconcile.MapState{"control_map": {ID: 7, Name: "control_map"}},
+		control:  reconcile.ControlState{Verified: true, Enabled: true, Generation: 42},
 		programs: map[string]reconcile.ProgramState{"tc_masq": {ID: 8, Name: "tc_masq", Tag: "tag"}},
 	}
 	actual, err := testPinScanner(t, backend).Scan(context.Background())
-	if err != nil || actual.Maps["control_map"].ID != 7 || actual.Programs["tc_masq"].ID != 8 || len(actual.Orphans) != 1 || actual.ScannedAt.Unix() != 10 {
+	if err != nil || actual.Maps["control_map"].ID != 7 || !actual.Control.Verified || !actual.Control.Enabled || actual.Control.Generation != 42 || actual.Programs["tc_masq"].ID != 8 || len(actual.Orphans) != 1 || actual.ScannedAt.Unix() != 10 {
 		t.Fatalf("unexpected scan result: actual=%+v err=%v", actual, err)
 	}
 	if actual.Orphans[0].Kind != "map-pin" || actual.Orphans[0].Identity != "/sys/fs/bpf/oncache/v1/maps/foreign_map" {
@@ -74,6 +83,18 @@ func TestPinScannerPropagatesInspectionError(t *testing.T) {
 	backend := &fakePinBackend{names: map[string][]string{"maps": {"control_map"}}, mapErr: want}
 	if _, err := testPinScanner(t, backend).Scan(context.Background()); !errors.Is(err, want) {
 		t.Fatalf("expected map inspection error: %v", err)
+	}
+}
+
+func TestPinScannerPropagatesControlInspectionError(t *testing.T) {
+	want := errors.New("control value failed")
+	backend := &fakePinBackend{
+		names:      map[string][]string{"maps": {"control_map"}},
+		maps:       map[string]reconcile.MapState{"control_map": {ID: 7, Name: "control_map"}},
+		controlErr: want,
+	}
+	if _, err := testPinScanner(t, backend).Scan(context.Background()); !errors.Is(err, want) {
+		t.Fatalf("expected control inspection error: %v", err)
 	}
 }
 

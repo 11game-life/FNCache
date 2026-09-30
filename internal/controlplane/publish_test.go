@@ -47,6 +47,11 @@ func TestVerifyStateRequiresCompleteVerifiedObjects(t *testing.T) {
 	if err := VerifyState(desired, actual); err != nil {
 		t.Fatal(err)
 	}
+	actual.Control.Verified = false
+	if err := VerifyState(desired, actual); err == nil {
+		t.Fatal("unverified control Map was accepted")
+	}
+	actual.Control.Verified = true
 	actual.Control.Enabled = true
 	if err := VerifyState(desired, actual); err == nil {
 		t.Fatal("enabled control Map was accepted")
@@ -141,7 +146,7 @@ func publishTestDesired() reconcile.DesiredState {
 }
 
 func publishTestActual(desired reconcile.DesiredState) reconcile.ActualState {
-	actual := reconcile.ActualState{Programs: map[string]reconcile.ProgramState{
+	actual := reconcile.ActualState{Control: reconcile.ControlState{Verified: true}, Programs: map[string]reconcile.ProgramState{
 		"tc_init_e": {ID: 10, Name: "tc_init_e"}, "tc_restore": {ID: 11, Name: "tc_restore"},
 		"tc_init_in": {ID: 12, Name: "tc_init_in"}, "tc_masq": {ID: 13, Name: "tc_masq"},
 	}, Maps: make(map[string]reconcile.MapState), FlannelRule: reconcile.RuleState{Present: true, Identity: "ONCACHE/oncache:install-a", Fingerprint: "rule-fp"}}

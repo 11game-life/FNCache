@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
 	"github.com/cilium/ebpf"
 )
 
@@ -27,6 +28,21 @@ type controlMap interface {
 }
 
 type controlMapOpener func(string) (controlMap, error)
+
+func readControlState(control controlMap) (reconcile.ControlState, error) {
+	key := uint32(0)
+	var value ControlV1
+	if err := control.Lookup(key, &value); err != nil {
+		return reconcile.ControlState{}, fmt.Errorf("read control Map: %w", err)
+	}
+	if err := validateControlValue(value); err != nil {
+		return reconcile.ControlState{}, err
+	}
+	if value.Enabled > 1 {
+		return reconcile.ControlState{}, fmt.Errorf("invalid control Map enabled value: %d", value.Enabled)
+	}
+	return reconcile.ControlState{Verified: true, Enabled: value.Enabled == 1, Generation: value.Generation}, nil
+}
 
 type ControlWriter struct {
 	pinRoot string

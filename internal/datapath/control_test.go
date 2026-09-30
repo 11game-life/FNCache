@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
 	"github.com/cilium/ebpf"
 )
 
@@ -50,6 +51,36 @@ func (m *fakeControlMap) Update(_ interface{}, value interface{}, _ ebpf.MapUpda
 func (m *fakeControlMap) Close() error {
 	m.closeCalls++
 	return m.closeErr
+}
+
+func TestReadControlState(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     ControlV1
+		lookupErr error
+		want      reconcile.ControlState
+		wantErr   string
+	}{
+		{name: "enabled", value: ControlV1{ABIVersion: 1, Enabled: 1, Generation: 42}, want: reconcile.ControlState{Verified: true, Enabled: true, Generation: 42}},
+		{name: "disabled", value: ControlV1{ABIVersion: 1, Enabled: 0}, want: reconcile.ControlState{Verified: true}},
+		{name: "ABI mismatch", value: ControlV1{ABIVersion: 2}, wantErr: "ABI mismatch"},
+		{name: "lookup failure", lookupErr: errors.New("lookup failed"), wantErr: "read control Map"},
+		{name: "invalid enabled value", value: ControlV1{ABIVersion: 1, Enabled: 2}, wantErr: "invalid control Map enabled value"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			state, err := readControlState(&fakeControlMap{value: test.value, lookupErr: test.lookupErr})
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("unexpected read error: %v", err)
+				}
+				return
+			}
+			if err != nil || state != test.want {
+				t.Fatalf("unexpected control state: state=%+v err=%v want=%+v", state, err, test.want)
+			}
+		})
+	}
 }
 
 func TestControlWriterDisablePreservesControlState(t *testing.T) {

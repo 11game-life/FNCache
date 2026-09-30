@@ -32,8 +32,8 @@ func (e *MapEnsurer) EnsureEndpointMaps(ctx context.Context, desired reconcile.D
 	if !desired.Enabled {
 		return false, nil
 	}
-	if !fastPathDisabled {
-		return false, fmt.Errorf("refusing Map update while fast path is enabled")
+	if !fastPathDisabled || !actual.Control.Verified || actual.Control.Enabled {
+		return false, fmt.Errorf("refusing Map update while fast path is enabled or unverified")
 	}
 	expected, ok := desired.LocalEndpoints[endpoint.Pod.UID]
 	if !ok || !sameEndpointIdentity(expected, endpoint) {

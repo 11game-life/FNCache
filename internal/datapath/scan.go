@@ -14,6 +14,7 @@ import (
 type pinBackend interface {
 	List(string) ([]string, error)
 	InspectMap(string, MapSchema) (reconcile.MapState, error)
+	InspectControl(string) (reconcile.ControlState, error)
 	InspectProgram(string, string) (reconcile.ProgramState, error)
 }
 
@@ -77,6 +78,13 @@ func (s *PinScanner) scanMaps(ctx context.Context, expected map[string]MapSchema
 			return fmt.Errorf("inspect pinned Map %s: %w", name, err)
 		}
 		actual.Maps[name] = state
+		if name == "control_map" {
+			control, err := s.backend.InspectControl(path)
+			if err != nil {
+				return fmt.Errorf("inspect control Map: %w", err)
+			}
+			actual.Control = control
+		}
 	}
 	return nil
 }
@@ -140,6 +148,15 @@ func (ciliumPinBackend) InspectMap(path string, expected MapSchema) (reconcile.M
 		return reconcile.MapState{}, fmt.Errorf("kernel did not provide a Map ID")
 	}
 	return reconcile.MapState{ID: uint32(id), Name: expected.Name, KeySize: info.KeySize, ValueSize: info.ValueSize, MaxEntries: info.MaxEntries}, nil
+}
+
+func (ciliumPinBackend) InspectControl(path string) (reconcile.ControlState, error) {
+	object, err := openPinnedControlMap(path)
+	if err != nil {
+		return reconcile.ControlState{}, err
+	}
+	defer object.Close()
+	return readControlState(object)
 }
 
 func (ciliumPinBackend) InspectProgram(path, name string) (reconcile.ProgramState, error) {

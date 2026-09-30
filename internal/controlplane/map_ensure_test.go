@@ -76,6 +76,23 @@ func TestMapEnsurerIsIdempotentAndRequiresDisabledPath(t *testing.T) {
 	}
 }
 
+func TestMapEnsurerRejectsEnabledOrUnverifiedControlMap(t *testing.T) {
+	store := &fakeMapStore{}
+	ensurer, _ := NewMapEnsurer(store)
+	endpoint := mapEnsureTestEndpoint()
+	desired := mapEnsureDesired(endpoint)
+	actual := mapEnsureActual()
+	actual.Control.Enabled = true
+	if _, err := ensurer.EnsureEndpointMaps(context.Background(), desired, actual, endpoint, true); err == nil || len(store.calls) != 0 {
+		t.Fatalf("enabled control Map was accepted: err=%v calls=%v", err, store.calls)
+	}
+	actual = mapEnsureActual()
+	actual.Control.Verified = false
+	if _, err := ensurer.EnsureEndpointMaps(context.Background(), desired, actual, endpoint, true); err == nil || len(store.calls) != 0 {
+		t.Fatalf("unverified control Map was accepted: err=%v calls=%v", err, store.calls)
+	}
+}
+
 func TestMapEnsurerRejectsInvalidIdentityOrSchema(t *testing.T) {
 	store := &fakeMapStore{}
 	ensurer, _ := NewMapEnsurer(store)
@@ -107,7 +124,7 @@ func mapEnsureDesired(endpoint resolver.Endpoint) reconcile.DesiredState {
 }
 
 func mapEnsureActual() reconcile.ActualState {
-	return reconcile.ActualState{Maps: map[string]reconcile.MapState{
+	return reconcile.ActualState{Control: reconcile.ControlState{Verified: true}, Maps: map[string]reconcile.MapState{
 		"ingress_cache": {Name: "ingress_cache", KeySize: 4, ValueSize: 16, MaxEntries: 1024},
 		"devmap":        {Name: "devmap", KeySize: 4, ValueSize: 12, MaxEntries: 8},
 	}}
