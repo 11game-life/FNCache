@@ -46,6 +46,8 @@ type StaticRuntime struct {
 	base            localBaseEnsurer
 	endpoint        localEndpointEnsurer
 	maps            localMapEnsurer
+	ownership       localOwnershipSource
+	remover         *controlplane.EndpointRemover
 	publisher       *controlplane.Publisher
 }
 
@@ -61,10 +63,15 @@ func NewStaticRuntime(ctx context.Context, config StaticRuntimeConfig) (*StaticR
 	if err != nil {
 		return nil, err
 	}
+	remover, err := controlplane.NewEndpointRemover(components.mapWriter, components.tc)
+	if err != nil {
+		_ = components.Close()
+		return nil, err
+	}
 	runtime := &StaticRuntime{
 		config: config, cri: components.cri, endpointScanner: components.endpointScanner, pins: components.pins, tcScanner: components.tcScanner,
 		sources: components.sources, control: components.control, collection: components.collection, marker: components.marker,
-		base: components.base, endpoint: components.endpoint, maps: components.maps, publisher: components.publisher,
+		base: components.base, endpoint: components.endpoint, maps: components.maps, ownership: components.ownership, remover: remover, publisher: components.publisher,
 	}
 	return runtime, nil
 }
@@ -87,7 +94,7 @@ func (r *StaticRuntime) RunOnce(ctx context.Context) (reconcile.ReconcileResult,
 	}
 	backend, err := controlplane.NewFirstPassBackend(controlplane.FirstPassBackendConfig{
 		Observer: observer, Control: r.control, Collection: r.collection, Marker: r.marker,
-		Base: r.base, Endpoint: r.endpoint, Maps: r.maps, Publisher: r.publisher,
+		Base: r.base, Endpoint: r.endpoint, Maps: r.maps, Ownership: r.ownership, Remover: r.remover, Publisher: r.publisher,
 	})
 	if err != nil {
 		return reconcile.ReconcileResult{}, err

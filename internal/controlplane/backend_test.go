@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"testing"
 
 	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
@@ -46,6 +47,17 @@ type backendEnsurer struct {
 	err   error
 }
 
+type backendRemover struct {
+	calls int
+	uids  []string
+}
+
+func (r *backendRemover) Remove(_ context.Context, owned reconcile.OwnedEndpoint, _ reconcile.ActualState, _ reconcile.DesiredState) error {
+	r.calls++
+	r.uids = append(r.uids, owned.PodUID)
+	return nil
+}
+
 func (f *backendEnsurer) EnsureBase(context.Context, reconcile.DesiredState, reconcile.ActualState) (bool, error) {
 	f.calls++
 	return true, f.err
@@ -72,13 +84,14 @@ func TestFirstPassBackendRunsAllStagesAndPublishesLastScan(t *testing.T) {
 	maps := &backendEnsurer{}
 	store := &fakeOwnershipCommitter{events: new([]string)}
 	publish := &fakeControlPublisher{events: store.events}
+	remover := &backendRemover{}
 	publisher, err := NewPublisher(store, publish, publishTestConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	backend, err := NewFirstPassBackend(FirstPassBackendConfig{
 		Observer: observer, Control: control, Collection: collection, Marker: marker,
-		Base: base, Endpoint: endpoint, Maps: maps, Publisher: publisher,
+		Base: base, Endpoint: endpoint, Maps: maps, Ownership: store, Remover: remover, Publisher: publisher,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +120,7 @@ func TestFirstPassBackendStopsBeforeOwnershipOnEnsureFailure(t *testing.T) {
 		Observer: &backendObserver{desired: desired, actual: publishTestActual(desired)},
 		Control:  &backendControl{}, Collection: &backendCollection{}, Marker: &backendMarker{},
 		Base: &backendEnsurer{err: errors.New("base failed")}, Endpoint: &backendEnsurer{},
-		Maps: &backendEnsurer{}, Publisher: publisher,
+		Maps: &backendEnsurer{}, Ownership: store, Remover: &backendRemover{}, Publisher: publisher,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -118,5 +131,48 @@ func TestFirstPassBackendStopsBeforeOwnershipOnEnsureFailure(t *testing.T) {
 	}
 	if len(*store.events) != 0 {
 		t.Fatalf("ownership was changed after ensure failure: %v", *store.events)
+	}
+}
+
+func TestFirstPassBackendCleansRemovedAndReplacedOwnedEndpoints(t *testing.T) {
+	tests := []struct {
+		name     string
+		previous reconcile.OwnedEndpoint
+		wantUID  string
+	}{
+		{name: "removed", previous: reconcile.OwnedEndpoint{PodUID: "pod-old", PodIPv4: netip.MustParseAddr("10.244.1.11"), NetNSInode: 43, PeerIfIndex: 11, HostIfIndex: 21}, wantUID: "pod-old"},
+		{name: "replaced", previous: reconcile.OwnedEndpoint{PodUID: "pod-a", PodIPv4: netip.MustParseAddr("10.244.1.11"), NetNSInode: 43, PeerIfIndex: 11, HostIfIndex: 21}, wantUID: "pod-a"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			desired := publishTestDesired()
+			store := &fakeOwnershipCommitter{events: new([]string), state: reconcile.OwnershipState{
+				SchemaVersion: 1, InstallationID: "install-a", NodeUID: "node-a", ELFBuildID: "sha256:build", ABI: reconcile.BPFABIVersion,
+				Endpoints: map[string]reconcile.OwnedEndpoint{tt.previous.PodUID: tt.previous},
+			}}
+			publisher, err := NewPublisher(store, &fakeControlPublisher{events: store.events}, publishTestConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			remover := &backendRemover{}
+			backend, err := NewFirstPassBackend(FirstPassBackendConfig{
+				Observer: &backendObserver{desired: desired, actual: publishTestActual(desired)}, Control: &backendControl{},
+				Collection: &backendCollection{}, Marker: &backendMarker{}, Base: &backendEnsurer{}, Endpoint: &backendEnsurer{}, Maps: &backendEnsurer{},
+				Ownership: store, Remover: remover, Publisher: publisher,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			coordinator, err := reconcile.NewCoordinator(backend)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := coordinator.FullReconcile(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if remover.calls != 1 || len(remover.uids) != 1 || remover.uids[0] != tt.wantUID {
+				t.Fatalf("unexpected cleanup calls: calls=%d uids=%v", remover.calls, remover.uids)
+			}
+		})
 	}
 }

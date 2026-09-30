@@ -19,6 +19,10 @@ type fakeOwnershipCommitter struct {
 	err    error
 }
 
+func (f *fakeOwnershipCommitter) Load(context.Context) (reconcile.OwnershipState, error) {
+	return f.state, nil
+}
+
 func (f *fakeOwnershipCommitter) Commit(_ context.Context, state reconcile.OwnershipState) error {
 	*f.events = append(*f.events, "commit")
 	if f.err != nil {

@@ -26,7 +26,7 @@ type deleteRemover struct {
 	err    error
 }
 
-func (r *deleteRemover) Remove(context.Context, reconcile.OwnedEndpoint, reconcile.ActualState) error {
+func (r *deleteRemover) Remove(context.Context, reconcile.OwnedEndpoint, reconcile.ActualState, reconcile.DesiredState) error {
 	*r.events = append(*r.events, "remove")
 	return r.err
 }
@@ -76,7 +76,7 @@ func TestLocalEndpointDeleteHandlerRemovesAndPublishes(t *testing.T) {
 	if len(publisher.desired.LocalEndpoints) != 0 || len(events) != 6 {
 		t.Fatalf("deleted endpoint was retained: desired=%#v events=%v", publisher.desired.LocalEndpoints, events)
 	}
-	if events[0] != "disable" || events[1] != "scan" || events[2] != "remove" || events[3] != "scan" || events[5] != "publish" {
+	if events[0] != "disable" || events[1] != "scan" || events[2] != "desired" || events[3] != "remove" || events[4] != "scan" || events[5] != "publish" {
 		t.Fatalf("unexpected deletion order: %v", events)
 	}
 }
@@ -108,10 +108,11 @@ func TestLocalEndpointDeleteHandlerDefersIPReuse(t *testing.T) {
 	newPod.Identity.UID = "pod-2"
 	store := deleteHandlerStore(t, newPod)
 	handler := deleteHandler(t, store, &deleteOwnership{state: deleteOwnershipState()}, &events, &localHandlerPublisher{events: &events})
-	err := handler.Handle(context.Background(), reconcile.ReconcileKey{Kind: reconcile.ReconcileLocalEndpoint, UID: old.Identity.UID})
-	var classified *reconcile.ClassifiedError
-	if !errors.As(err, &classified) || classified.ReasonCode() != reconcile.ReasonPodIPReusePending || len(events) != 0 {
-		t.Fatalf("IP reuse was not deferred: err=%v events=%v", err, events)
+	if err := handler.Handle(context.Background(), reconcile.ReconcileKey{Kind: reconcile.ReconcileLocalEndpoint, UID: old.Identity.UID}); err != nil {
+		t.Fatalf("IP reuse cleanup failed: %v", err)
+	}
+	if len(events) != 6 || events[0] != "disable" || events[1] != "scan" || events[2] != "desired" || events[3] != "remove" || events[4] != "scan" || events[5] != "publish" {
+		t.Fatalf("unexpected IP reuse cleanup sequence: %v", events)
 	}
 }
 
@@ -125,7 +126,7 @@ func TestLocalEndpointDeleteHandlerCleansWhenPodMovesRemote(t *testing.T) {
 	if err := handler.Handle(context.Background(), reconcile.ReconcileKey{Kind: reconcile.ReconcileLocalEndpoint, UID: "pod-1"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(publisher.desired.LocalEndpoints) != 0 || len(events) != 6 || events[2] != "remove" || events[5] != "publish" {
+	if len(publisher.desired.LocalEndpoints) != 0 || len(events) != 6 || events[2] != "desired" || events[3] != "remove" || events[5] != "publish" {
 		t.Fatalf("remote migration did not clean old local endpoint: desired=%#v events=%v", publisher.desired.LocalEndpoints, events)
 	}
 }

@@ -40,6 +40,10 @@ func endpointAttachments() []reconcile.AttachmentState {
 	}
 }
 
+func emptyEndpointDesired() reconcile.DesiredState {
+	return reconcile.DesiredState{LocalEndpoints: map[string]resolver.Endpoint{}}
+}
+
 func TestEndpointRemoverInvalidatesMapsBeforeRemovingOwnedFilters(t *testing.T) {
 	maps := &fakeEndpointMaps{}
 	tc := &fakeEndpointTC{}
@@ -47,7 +51,7 @@ func TestEndpointRemoverInvalidatesMapsBeforeRemovingOwnedFilters(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := remover.Remove(context.Background(), ownedEndpoint(), reconcile.ActualState{Attachments: endpointAttachments()}); err != nil {
+	if err := remover.Remove(context.Background(), ownedEndpoint(), reconcile.ActualState{Attachments: endpointAttachments()}, emptyEndpointDesired()); err != nil {
 		t.Fatal(err)
 	}
 	if len(maps.calls) != 3 || maps.calls[0] != "delete:ingress_cache" || maps.calls[1] != "delete:egressip_cache" || maps.calls[2] != "clear:policy_cache" {
@@ -64,7 +68,7 @@ func TestEndpointRemoverRejectsForeignFilter(t *testing.T) {
 	remover, _ := NewEndpointRemover(maps, tc)
 	attachments := endpointAttachments()
 	attachments[0].Program = "foreign"
-	err := remover.Remove(context.Background(), ownedEndpoint(), reconcile.ActualState{Attachments: attachments})
+	err := remover.Remove(context.Background(), ownedEndpoint(), reconcile.ActualState{Attachments: attachments}, emptyEndpointDesired())
 	var classified *reconcile.ClassifiedError
 	if !errors.As(err, &classified) || classified.Class() != reconcile.ErrorConflict || len(tc.specs) != 0 {
 		t.Fatalf("foreign filter was not rejected: err=%v specs=%+v", err, tc.specs)
@@ -75,10 +79,31 @@ func TestEndpointRemoverIsIdempotentWhenFiltersAreMissing(t *testing.T) {
 	maps := &fakeEndpointMaps{}
 	tc := &fakeEndpointTC{}
 	remover, _ := NewEndpointRemover(maps, tc)
-	if err := remover.Remove(context.Background(), ownedEndpoint(), reconcile.ActualState{}); err != nil {
+	if err := remover.Remove(context.Background(), ownedEndpoint(), reconcile.ActualState{}, emptyEndpointDesired()); err != nil {
 		t.Fatal(err)
 	}
 	if len(tc.specs) != 0 || len(maps.calls) != 3 {
 		t.Fatalf("missing filters were not idempotent: maps=%v specs=%v", maps.calls, tc.specs)
+	}
+}
+
+func TestEndpointRemoverProtectsReusedIPAndHostLink(t *testing.T) {
+	maps := &fakeEndpointMaps{}
+	tc := &fakeEndpointTC{}
+	remover, _ := NewEndpointRemover(maps, tc)
+	desired := reconcile.DesiredState{LocalEndpoints: map[string]resolver.Endpoint{
+		"pod-new": {
+			Pod: resolver.PodIdentity{UID: "pod-new"}, PodIPv4: netip.MustParseAddr("10.42.0.2"), NetNSInode: 99,
+			PeerLink: resolver.LinkIdentity{NetNSInode: 99, IfIndex: 9}, HostLink: resolver.LinkIdentity{IfIndex: 8},
+		},
+	}}
+	if err := remover.Remove(context.Background(), ownedEndpoint(), reconcile.ActualState{Attachments: endpointAttachments()}, desired); err != nil {
+		t.Fatal(err)
+	}
+	if len(maps.calls) != 1 || maps.calls[0] != "clear:policy_cache" {
+		t.Fatalf("reused IP was deleted: maps=%v", maps.calls)
+	}
+	if len(tc.specs) != 1 || tc.specs[0].Program != "tc_init_in" {
+		t.Fatalf("reused host filter was deleted: specs=%+v", tc.specs)
 	}
 }

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -43,6 +44,7 @@ type LocalEndpointHandlerConfig struct {
 	Control   localControl
 	Endpoint  localEndpointEnsurer
 	Maps      localMapEnsurer
+	Remover   localEndpointRemover
 	Publisher localPublisher
 }
 
@@ -51,7 +53,7 @@ type LocalEndpointHandler struct {
 }
 
 func NewLocalEndpointHandler(config LocalEndpointHandlerConfig) (*LocalEndpointHandler, error) {
-	if config.Store == nil || config.Resolver == nil || config.LocalNode == "" || config.Desired == nil || config.Scanner == nil || config.Control == nil || config.Endpoint == nil || config.Maps == nil || config.Publisher == nil {
+	if config.Store == nil || config.Resolver == nil || config.LocalNode == "" || config.Desired == nil || config.Scanner == nil || config.Control == nil || config.Endpoint == nil || config.Maps == nil || config.Remover == nil || config.Publisher == nil {
 		return nil, fmt.Errorf("local endpoint handler dependencies are required")
 	}
 	return &LocalEndpointHandler{config: config}, nil
@@ -99,6 +101,11 @@ func (h *LocalEndpointHandler) Handle(ctx context.Context, key reconcile.Reconci
 	if err != nil {
 		return fmt.Errorf("scan before local endpoint ensure: %w", err)
 	}
+	if previous, ok := base.LocalEndpoints[pod.Identity.UID]; ok && endpointIdentityChanged(previous, endpoint) {
+		if err := h.config.Remover.Remove(ctx, ownedEndpointFromResolver(previous), actual, desired); err != nil {
+			return fmt.Errorf("remove previous local endpoint identity: %w", err)
+		}
+	}
 	if _, err := h.config.Endpoint.EnsureEndpoint(ctx, desired, actual, endpoint); err != nil {
 		return fmt.Errorf("ensure local endpoint: %w", err)
 	}
@@ -113,6 +120,20 @@ func (h *LocalEndpointHandler) Handle(ctx context.Context, key reconcile.Reconci
 		return fmt.Errorf("publish local endpoint: %w", err)
 	}
 	return nil
+}
+
+func endpointIdentityChanged(previous, current resolver.Endpoint) bool {
+	return previous.Pod != current.Pod || previous.Node != current.Node || previous.PodIPv4 != current.PodIPv4 ||
+		previous.NetNSInode != current.NetNSInode || !sameLocalLinkIdentity(previous.PeerLink, current.PeerLink) ||
+		!sameLocalLinkIdentity(previous.HostLink, current.HostLink)
+}
+
+func sameLocalLinkIdentity(previous, current resolver.LinkIdentity) bool {
+	return previous.NetNSInode == current.NetNSInode && previous.IfIndex == current.IfIndex && previous.IfName == current.IfName && bytes.Equal(previous.MAC, current.MAC)
+}
+
+func ownedEndpointFromResolver(endpoint resolver.Endpoint) reconcile.OwnedEndpoint {
+	return reconcile.OwnedEndpoint{PodUID: endpoint.Pod.UID, PodIPv4: endpoint.PodIPv4, NetNSInode: endpoint.NetNSInode, PeerIfIndex: endpoint.PeerLink.IfIndex, HostIfIndex: endpoint.HostLink.IfIndex}
 }
 
 func classifyEndpointError(err error) error {
