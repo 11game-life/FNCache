@@ -75,13 +75,14 @@ func (o *DynamicObserver) buildObserver(ctx context.Context, snapshot kube.Snaps
 	if err != nil {
 		return nil, fmt.Errorf("scan local endpoints for dynamic observer: %w", err)
 	}
-	links := mergeEndpointLinks([]resolver.LinkIdentity{flannelConfig.UnderlayLink}, endpoints.Endpoints)
+	baseLinks := []resolver.LinkIdentity{flannelConfig.UnderlayLink}
+	links := resolver.MergeEndpointLinks(baseLinks, endpoints.Endpoints)
 	observer, err := controlplane.NewObserver(o.sources, controlplane.ObservationInput{
 		Generation:       o.generation.Add(1),
 		PreflightRequest: discovery.PreflightRequest{Node: node.Identity, PinRoot: o.config.PinRoot, StateDir: o.config.StateDir, RuntimeURI: o.config.RuntimeEndpoint, Overlay: o.config.Overlay.Type},
 		FlannelRequest:   flannelRequest,
 		MarkerRule:       flannel.MarkerRuleSpec{Chain: o.config.Markers.Chain, Comment: o.config.Markers.Comment},
-		Pods:             localPods, TCLinks: links,
+		Pods:             localPods, TCLinks: links, BaseTCLinks: baseLinks,
 	})
 	if err != nil {
 		return nil, err

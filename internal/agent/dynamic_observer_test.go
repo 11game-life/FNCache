@@ -37,9 +37,14 @@ func (dynamicObserverPins) Scan(context.Context) (reconcile.ActualState, error) 
 	return reconcile.ActualState{Programs: map[string]reconcile.ProgramState{"tc_init_e": {ID: 1, Name: "tc_init_e"}, "tc_restore": {ID: 2, Name: "tc_restore"}, "tc_init_in": {ID: 3, Name: "tc_init_in"}, "tc_masq": {ID: 4, Name: "tc_masq"}}, Maps: map[string]reconcile.MapState{}}, nil
 }
 
-type dynamicObserverTC struct{}
+type dynamicObserverTC struct {
+	links *[]resolver.LinkIdentity
+}
 
-func (dynamicObserverTC) Scan(context.Context, []resolver.LinkIdentity) (reconcile.ActualState, error) {
+func (t dynamicObserverTC) Scan(_ context.Context, links []resolver.LinkIdentity) (reconcile.ActualState, error) {
+	if t.links != nil {
+		*t.links = append([]resolver.LinkIdentity(nil), links...)
+	}
 	return reconcile.ActualState{}, nil
 }
 
@@ -64,7 +69,9 @@ func TestDynamicObserverBuildsLatestDesiredAndActualState(t *testing.T) {
 	if err := store.UpsertPod(resolver.PodSnapshot{Identity: resolver.PodIdentity{Namespace: "default", Name: "remote", UID: "pod-remote"}, NodeName: "node-b", PodIPv4: netip.MustParseAddr("10.42.1.2"), Phase: "Running"}); err != nil {
 		t.Fatal(err)
 	}
-	sources := controlplane.Sources{Preflight: dynamicObserverPreflight{}, Flannel: dynamicObserverFlannel{}, Endpoints: dynamicObserverEndpoints{}, Pins: dynamicObserverPins{}, TC: dynamicObserverTC{}, Rules: dynamicObserverRules{}}
+	var scannedLinks []resolver.LinkIdentity
+	tc := dynamicObserverTC{links: &scannedLinks}
+	sources := controlplane.Sources{Preflight: dynamicObserverPreflight{}, Flannel: dynamicObserverFlannel{}, Endpoints: dynamicObserverEndpoints{}, Pins: dynamicObserverPins{}, TC: tc, Rules: dynamicObserverRules{}}
 	observer, err := NewDynamicObserver(cfg, store, sources)
 	if err != nil {
 		t.Fatal(err)
@@ -81,5 +88,8 @@ func TestDynamicObserverBuildsLatestDesiredAndActualState(t *testing.T) {
 	}
 	if _, err := observer.Scan(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if len(scannedLinks) != 3 || scannedLinks[0].IfIndex != 2 || scannedLinks[1].IfIndex != 7 || scannedLinks[2].IfIndex != 8 {
+		t.Fatalf("unexpected dynamic TC links: %+v", scannedLinks)
 	}
 }
