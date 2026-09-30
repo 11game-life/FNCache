@@ -80,6 +80,20 @@ func TestControlWriterDisablePreservesControlState(t *testing.T) {
 	}
 }
 
+func TestControlWriterDisableInitializesUninitializedMap(t *testing.T) {
+	fake := &fakeControlMap{}
+	writer, err := newControlWriter(t.TempDir(), func(string) (controlMap, error) { return fake, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Disable(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fake.updated != (ControlV1{ABIVersion: 1}) {
+		t.Fatalf("unexpected initialized control state: %+v", fake.updated)
+	}
+}
+
 func TestControlWriterInitializeDisablesAndResetsState(t *testing.T) {
 	fake := &fakeControlMap{value: ControlV1{ABIVersion: 1, Enabled: 1, Generation: 9, HeartbeatNS: 10, HeartbeatTimeoutNS: 20, Flags: 3, Reserved: 4}}
 	writer, err := newControlWriter(t.TempDir(), func(string) (controlMap, error) { return fake, nil })
