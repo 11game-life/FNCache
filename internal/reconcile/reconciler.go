@@ -58,34 +58,34 @@ func (c *Coordinator) FullReconcile(ctx context.Context) (ReconcileResult, error
 	c.setState(AgentReconciling)
 	result.State = AgentReconciling
 	if err := c.runStage(ctx, &result, "disable", func() error { return c.backend.Disable(ctx) }); err != nil {
-		return c.fail(result, err)
+		return c.fail(result, err, false)
 	}
 	desired, err := c.discover(ctx, &result)
 	if err != nil {
-		return c.fail(result, err)
+		return c.fail(result, err, true)
 	}
 	actual, err := c.scan(ctx, &result)
 	if err != nil {
-		return c.fail(result, err)
+		return c.fail(result, err, true)
 	}
 	changed, err := c.ensure(ctx, &result, desired, actual)
 	if err != nil {
-		return c.fail(result, err)
+		return c.fail(result, err, true)
 	}
 	if err := c.runStage(ctx, &result, "verify", func() error {
 		return c.backend.Verify(ctx, desired, actual)
 	}); err != nil {
-		return c.fail(result, err)
+		return c.fail(result, err, true)
 	}
 	if err := c.runStage(ctx, &result, "commit", func() error {
 		return c.backend.Commit(ctx, desired, actual)
 	}); err != nil {
-		return c.fail(result, err)
+		return c.fail(result, err, true)
 	}
 	if err := c.runStage(ctx, &result, "publish", func() error {
 		return c.backend.Publish(ctx, desired)
 	}); err != nil {
-		return c.fail(result, err)
+		return c.fail(result, err, true)
 	}
 
 	result.Generation = desired.Generation
@@ -135,9 +135,13 @@ func (c *Coordinator) runStage(ctx context.Context, result *ReconcileResult, nam
 	return err
 }
 
-func (c *Coordinator) fail(result ReconcileResult, err error) (ReconcileResult, error) {
-	c.setState(AgentDisabled)
-	result.State = AgentDisabled
+func (c *Coordinator) fail(result ReconcileResult, err error, disableConfirmed bool) (ReconcileResult, error) {
+	state := AgentDegraded
+	if disableConfirmed {
+		state = AgentDisabled
+	}
+	c.setState(state)
+	result.State = state
 	return result, err
 }
 
