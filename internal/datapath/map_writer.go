@@ -21,8 +21,9 @@ type mapHandle interface {
 type mapOpener func(string) (mapHandle, error)
 
 type MapWriter struct {
-	pinRoot string
-	open    mapOpener
+	pinRoot     string
+	open        mapOpener
+	openControl controlMapOpener
 }
 
 func NewMapWriter(pinRoot string) (*MapWriter, error) {
@@ -30,13 +31,20 @@ func NewMapWriter(pinRoot string) (*MapWriter, error) {
 }
 
 func newMapWriter(pinRoot string, open mapOpener) (*MapWriter, error) {
+	return newMapWriterWithControl(pinRoot, open, openPinnedControlMap)
+}
+
+func newMapWriterWithControl(pinRoot string, open mapOpener, openControl controlMapOpener) (*MapWriter, error) {
 	if pinRoot == "" || !filepath.IsAbs(pinRoot) || filepath.Clean(pinRoot) == string(filepath.Separator) {
 		return nil, fmt.Errorf("BPF pin root must be a dedicated absolute directory")
 	}
 	if open == nil {
 		return nil, fmt.Errorf("Map opener is required")
 	}
-	return &MapWriter{pinRoot: filepath.Clean(pinRoot), open: open}, nil
+	if openControl == nil {
+		return nil, fmt.Errorf("control Map opener is required")
+	}
+	return &MapWriter{pinRoot: filepath.Clean(pinRoot), open: open, openControl: openControl}, nil
 }
 
 func (w *MapWriter) Ensure(ctx context.Context, name string, key, value []byte) (bool, error) {
@@ -81,11 +89,19 @@ func (w *MapWriter) Delete(ctx context.Context, name string, key []byte) (bool, 
 	if name == "" || filepath.Base(name) != name || len(key) == 0 {
 		return false, fmt.Errorf("invalid Map delete input")
 	}
+	control, err := w.openControlMap(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = control.Close() }()
 	object, err := w.open(filepath.Join(w.pinRoot, "maps", name))
 	if err != nil {
 		return false, fmt.Errorf("open pinned Map %s: %w", name, err)
 	}
 	defer func() { _ = object.Close() }()
+	if err := verifyControlDisabled(ctx, control); err != nil {
+		return false, fmt.Errorf("verify control Map before deleting %s: %w", name, err)
+	}
 	if err := object.Delete(key); err != nil {
 		if errors.Is(err, ebpf.ErrKeyNotExist) {
 			return false, nil
@@ -102,6 +118,11 @@ func (w *MapWriter) Clear(ctx context.Context, name string) (int, error) {
 	if name == "" || filepath.Base(name) != name {
 		return 0, fmt.Errorf("invalid Map clear input")
 	}
+	control, err := w.openControlMap(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = control.Close() }()
 	object, err := w.open(filepath.Join(w.pinRoot, "maps", name))
 	if err != nil {
 		return 0, fmt.Errorf("open pinned Map %s: %w", name, err)
@@ -116,12 +137,40 @@ func (w *MapWriter) Clear(ctx context.Context, name string) (int, error) {
 		if err := ctx.Err(); err != nil {
 			return deleted, err
 		}
+		if err := verifyControlDisabled(ctx, control); err != nil {
+			return deleted, fmt.Errorf("verify control Map before clearing %s: %w", name, err)
+		}
 		if err := object.Delete(key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 			return deleted, fmt.Errorf("clear Map %s: %w", name, err)
 		}
 		deleted++
 	}
 	return deleted, nil
+}
+
+func (w *MapWriter) openControlMap(ctx context.Context) (controlMap, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	control, err := w.openControl(filepath.Join(w.pinRoot, "maps", "control_map"))
+	if err != nil {
+		return nil, fmt.Errorf("open control Map: %w", err)
+	}
+	return control, nil
+}
+
+func verifyControlDisabled(ctx context.Context, control controlMap) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	state, err := readControlState(control)
+	if err != nil {
+		return err
+	}
+	if !state.Verified || state.Enabled {
+		return fmt.Errorf("refusing Map mutation while control Map is enabled or unverified")
+	}
+	return nil
 }
 
 func openPinnedMap(path string) (mapHandle, error) {
