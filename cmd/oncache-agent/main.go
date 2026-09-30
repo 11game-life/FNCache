@@ -60,8 +60,12 @@ func run(path string) (err error) {
 	if err != nil {
 		return fmt.Errorf("run static reconciliation: %w", err)
 	}
-	if result.State != reconcile.AgentReady {
+	if !staticReconcileSucceeded(result.State) {
 		return fmt.Errorf("static reconciliation did not reach Ready: %s", result.State)
 	}
 	return nil
+}
+
+func staticReconcileSucceeded(state reconcile.AgentState) bool {
+	return state == reconcile.AgentReady || state == reconcile.AgentDisabled
 }
