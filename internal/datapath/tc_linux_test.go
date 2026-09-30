@@ -4,6 +4,9 @@ package datapath
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,6 +17,8 @@ type fakeTCNetlinkAPI struct {
 	qdiscs                               []kernelQdisc
 	filters                              []kernelFilter
 	qdiscAdds, filterAdds, filterDeletes int
+	addFailures                          int
+	addErr                               error
 }
 
 func (f *fakeTCNetlinkAPI) listQdiscs(context.Context, resolver.LinkIdentity) ([]kernelQdisc, error) {
@@ -34,6 +39,10 @@ func (f *fakeTCNetlinkAPI) listFilters(_ context.Context, _ resolver.LinkIdentit
 	return result, nil
 }
 func (f *fakeTCNetlinkAPI) addFilter(_ context.Context, _ resolver.LinkIdentity, filter kernelFilter) error {
+	if f.addFailures > 0 {
+		f.addFailures--
+		return f.addErr
+	}
 	f.filters = append(f.filters, filter)
 	return nil
 }
@@ -59,12 +68,20 @@ func (p *fakeTCProgram) ProgramID() (uint32, error) { return p.id, nil }
 func (p *fakeTCProgram) Close() error               { p.closed = true; return nil }
 
 type fakeTCProgramLoader struct {
-	program tcProgram
-	path    string
+	program  tcProgram
+	programs map[string]tcProgram
+	path     string
 }
 
 func (l *fakeTCProgramLoader) Load(path string) (tcProgram, error) {
 	l.path = path
+	if l.programs != nil {
+		program, ok := l.programs[path]
+		if !ok {
+			return nil, errors.New("program path not found")
+		}
+		return program, nil
+	}
 	return l.program, nil
 }
 
@@ -124,6 +141,73 @@ func TestLinuxTCBackendAttachesPinnedProgram(t *testing.T) {
 	if _, err := backend.AttachFilter(context.Background(), spec); err == nil || len(api.filters) != 1 || !program.closed {
 		t.Fatalf("mismatched program was attached: err=%v api=%+v closed=%v", err, api, program.closed)
 	}
+}
+
+func TestLinuxTCBackendMigratesLegacyFilterByPinnedProgramID(t *testing.T) {
+	root := t.TempDir()
+	legacyPath := filepath.Join(root, "programs", "tc_init_e_func")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacy := &fakeTCProgram{fd: 11, id: 99}
+	current := &fakeTCProgram{fd: 17, id: 10}
+	loader := &fakeTCProgramLoader{programs: map[string]tcProgram{
+		legacyPath: legacy,
+		filepath.Join(root, "programs", "tc_init_e"): current,
+	}}
+	link := linuxTestLink()
+	api := &fakeTCNetlinkAPI{filters: []kernelFilter{{
+		LinkIndex: link.IfIndex, Parent: 0xfffffff3, Priority: FixedTCPriority, Handle: 0x100,
+		Kind: "bpf", Program: "tc_init_e_func", ProgramID: 99, DirectAction: true,
+	}}}
+	backend, err := newLinuxTCBackend(root, api, loader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := NewFixedFilter(link, "tc_init_e", 10, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, recognized, err := backend.(*linuxTCBackend).MigrateLegacyFilter(context.Background(), apiFilterState(link, "tc_init_e_func", 99), spec)
+	if err != nil || !recognized || !sameFilter(got, spec) || api.filterDeletes != 1 || len(api.filters) != 1 || api.filters[0].Program != "tc_init_e" || !legacy.closed || !current.closed {
+		t.Fatalf("legacy filter was not migrated: got=%+v recognized=%v err=%v api=%+v", got, recognized, err, api)
+	}
+}
+
+func TestLinuxTCBackendRestoresLegacyFilterWhenMigrationAttachFails(t *testing.T) {
+	root := t.TempDir()
+	legacyPath := filepath.Join(root, "programs", "tc_init_e_func")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacy := &fakeTCProgram{fd: 11, id: 99}
+	current := &fakeTCProgram{fd: 17, id: 10}
+	loader := &fakeTCProgramLoader{programs: map[string]tcProgram{
+		legacyPath: legacy,
+		filepath.Join(root, "programs", "tc_init_e"): current,
+	}}
+	link := linuxTestLink()
+	api := &fakeTCNetlinkAPI{
+		filters:     []kernelFilter{{LinkIndex: link.IfIndex, Parent: 0xfffffff3, Priority: FixedTCPriority, Handle: 0x100, Kind: "bpf", Program: "tc_init_e_func", ProgramID: 99, DirectAction: true}},
+		addFailures: 1,
+		addErr:      errors.New("attach failed"),
+	}
+	backend, _ := newLinuxTCBackend(root, api, loader)
+	spec, _ := NewFixedFilter(link, "tc_init_e", 10, true)
+	_, recognized, err := backend.(*linuxTCBackend).MigrateLegacyFilter(context.Background(), apiFilterState(link, "tc_init_e_func", 99), spec)
+	if err == nil || !recognized || len(api.filters) != 1 || api.filters[0].Program != "tc_init_e_func" || api.filters[0].ProgramID != 99 {
+		t.Fatalf("legacy filter was not restored after migration failure: recognized=%v err=%v api=%+v", recognized, err, api)
+	}
+}
+
+func apiFilterState(link resolver.LinkIdentity, program string, id uint32) TCFilterState {
+	return TCFilterState{Link: link, Hook: HookEgress, Program: program, ProgramID: id, Priority: FixedTCPriority, Handle: 0x100, DirectAction: true}
 }
 
 func TestLinuxTCBackendListsBothHooksAndDeletesByIdentity(t *testing.T) {

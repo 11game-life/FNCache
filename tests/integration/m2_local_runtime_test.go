@@ -35,6 +35,19 @@ func TestM2LocalStaticRuntime(t *testing.T) {
 	runStaticAgent(t)
 	first := snapshotLocalRuntime(t, pinRoot, statePath, markerComment, underlay)
 	assertExpectedPins(t, first)
+	installLegacyFilter(t, pinRoot, underlay)
+	runStaticAgent(t)
+	migrated := snapshotLocalRuntime(t, pinRoot, statePath, markerComment, underlay)
+	if strings.Contains(migrated.tc, "tc_init_e_func") {
+		t.Fatalf("legacy TC filter was not migrated: %s", migrated.tc)
+	}
+	runStaticAgent(t)
+	cleaned := snapshotLocalRuntime(t, pinRoot, statePath, markerComment, underlay)
+	for _, name := range []string{"tc_init_e", "tc_init_in", "tc_masq", "tc_restore", "tc_init_e_func"} {
+		if !hasName(cleaned.programs, name) {
+			t.Fatalf("expected canonical and retained legacy program pins, got=%v", cleaned.programs)
+		}
+	}
 	installExternalFilter(t, pinRoot, underlay)
 	withExternal := snapshotLocalRuntime(t, pinRoot, statePath, markerComment, underlay)
 
@@ -76,6 +89,49 @@ func installExternalFilter(t *testing.T, pinRoot, underlay string) {
 		filter.Fd = -1
 		if err := netlink.FilterDel(filter); err != nil {
 			t.Errorf("remove external filter: %v", err)
+		}
+	})
+}
+
+func installLegacyFilter(t *testing.T, pinRoot, underlay string) {
+	t.Helper()
+	link, err := netlink.LinkByName(underlay)
+	if err != nil {
+		t.Fatalf("find underlay for legacy filter: %v", err)
+	}
+	program, err := ebpf.LoadPinnedProgram(filepath.Join(pinRoot, "programs", "tc_init_e"), nil)
+	if err != nil {
+		t.Fatalf("load canonical program for legacy filter: %v", err)
+	}
+	legacyPath := filepath.Join(pinRoot, "programs", "tc_init_e_func")
+	if err := program.Pin(legacyPath); err != nil {
+		_ = program.Close()
+		t.Fatalf("pin legacy program alias: %v", err)
+	}
+	legacy := &netlink.BpfFilter{
+		FilterAttrs: netlink.FilterAttrs{LinkIndex: link.Attrs().Index, Parent: netlink.HANDLE_MIN_EGRESS, Priority: 1000, Handle: 0x100, Protocol: unix.ETH_P_ALL},
+		Fd:          program.FD(), Name: "tc_init_e_func", DirectAction: true,
+	}
+	current := &netlink.BpfFilter{
+		FilterAttrs: netlink.FilterAttrs{LinkIndex: link.Attrs().Index, Parent: netlink.HANDLE_MIN_EGRESS, Priority: 1000, Handle: 0x100, Protocol: unix.ETH_P_ALL},
+		Fd:          -1,
+	}
+	if err := netlink.FilterDel(current); err != nil {
+		_ = program.Close()
+		t.Fatalf("remove canonical filter before legacy install: %v", err)
+	}
+	if err := netlink.FilterAdd(legacy); err != nil {
+		_ = program.Close()
+		t.Fatalf("install legacy filter: %v", err)
+	}
+	if err := program.Close(); err != nil {
+		t.Fatalf("close legacy program: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = netlink.FilterDel(current)
+		if pinned, err := ebpf.LoadPinnedProgram(legacyPath, nil); err == nil {
+			_ = pinned.Unpin()
+			_ = pinned.Close()
 		}
 	})
 }
@@ -188,6 +244,15 @@ func assertExpectedPins(t *testing.T, snapshot localRuntimeSnapshot) {
 	if !reflect.DeepEqual(snapshot.programs, wantPrograms) {
 		t.Fatalf("unexpected Program pins: got=%v want=%v", snapshot.programs, wantPrograms)
 	}
+}
+
+func hasName(names []string, want string) bool {
+	for _, name := range names {
+		if name == want {
+			return true
+		}
+	}
+	return false
 }
 
 func assertSameSnapshot(t *testing.T, before, after localRuntimeSnapshot, phase string) {

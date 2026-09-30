@@ -98,7 +98,6 @@ func (e *CollectionEnsurer) EnsureCollection(ctx context.Context, desired reconc
 	}
 	return true, nil
 }
-
 func collectionReady(actual reconcile.ActualState) bool {
 	schema := datapath.V1Schema()
 	if len(actual.Programs) != len(schema.Programs) || len(actual.Maps) != len(schema.Maps) {
