@@ -1,0 +1,89 @@
+name: Close issues linked by merged pull requests
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: none
+  issues: write
+  pull-requests: read
+
+jobs:
+  close-linked-issues:
+    if: ${{ github.event.pull_request.merged == true }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Close issues referenced by the pull request
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pullRequest = context.payload.pull_request;
+            const repository = context.payload.repository;
+
+            if (pullRequest.base.ref !== repository.default_branch) {
+              core.info(
+                `Skipping PR #${pullRequest.number}: base branch ${pullRequest.base.ref} ` +
+                `is not the default branch ${repository.default_branch}.`,
+              );
+              return;
+            }
+
+            // Read only the trusted event payload; do not check out or execute PR code.
+            const body = String(pullRequest.body ?? '')
+              .replace(/```[\s\S]*?```/g, '')
+              .replace(/~~~[\s\S]*?~~~/g, '');
+            const closingKeyword =
+              /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)\b/gi;
+            const issueNumbers = [
+              ...new Set(
+                [...body.matchAll(closingKeyword)].map((match) => Number(match[1])),
+              ),
+            ];
+
+            if (issueNumbers.length === 0) {
+              core.info(`No same-repository closing references found in PR #${pullRequest.number}.`);
+              return;
+            }
+
+            const failures = [];
+
+            for (const issueNumber of issueNumbers) {
+              try {
+                const { data: issue } = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                });
+
+                if (issue.pull_request) {
+                  core.warning(`Skipping #${issueNumber}: it is a pull request, not an Issue.`);
+                  continue;
+                }
+
+                if (issue.state === 'closed') {
+                  core.info(`Issue #${issueNumber} is already closed.`);
+                  continue;
+                }
+
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  state: 'closed',
+                  state_reason: 'completed',
+                });
+
+                core.notice(`Closed Issue #${issueNumber} from merged PR #${pullRequest.number}.`);
+              } catch (error) {
+                const status = error.status ?? 'unknown';
+                failures.push(`#${issueNumber} (${status})`);
+                core.error(`Failed to close Issue #${issueNumber}: ${error.message}`);
+              }
+            }
+
+            if (failures.length > 0) {
+              core.setFailed(`Failed to close Issues: ${failures.join(', ')}`);
+            }
