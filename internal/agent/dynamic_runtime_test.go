@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/cat-cc-Lcos/FNCache/internal/controlplane"
 	"github.com/cat-cc-Lcos/FNCache/internal/datapath"
 	"github.com/cat-cc-Lcos/FNCache/internal/reconcile"
+	"github.com/cat-cc-Lcos/FNCache/internal/resolver"
 )
 
 type dynamicRuntimeMaps struct{}
@@ -33,6 +35,76 @@ type dynamicRuntimePublisherControl struct{}
 
 func (dynamicRuntimePublisherControl) Publish(context.Context, uint64, uint64, uint64, uint32) error {
 	return nil
+}
+
+type dynamicRuntimeEnsurers struct {
+	collection int32
+	marker     int32
+	base       int32
+}
+
+func (e *dynamicRuntimeEnsurers) EnsureCollection(context.Context, reconcile.DesiredState, reconcile.ActualState) (bool, error) {
+	atomic.AddInt32(&e.collection, 1)
+	return true, nil
+}
+
+func (e *dynamicRuntimeEnsurers) EnsureMarker(context.Context, reconcile.DesiredState) (bool, error) {
+	atomic.AddInt32(&e.marker, 1)
+	return true, nil
+}
+
+func (e *dynamicRuntimeEnsurers) EnsureBase(context.Context, reconcile.DesiredState, reconcile.ActualState) (bool, error) {
+	atomic.AddInt32(&e.base, 1)
+	return true, nil
+}
+
+type dynamicRuntimeEndpoints struct{}
+
+func (dynamicRuntimeEndpoints) Scan(context.Context, []resolver.PodSnapshot) (resolver.EndpointScanResult, error) {
+	return resolver.EndpointScanResult{Endpoints: map[string]resolver.Endpoint{}}, nil
+}
+
+type dynamicRuntimePins struct{}
+
+func (dynamicRuntimePins) Scan(context.Context) (reconcile.ActualState, error) {
+	schema := datapath.V1Schema()
+	actual := reconcile.ActualState{
+		Control:  reconcile.ControlState{Verified: true},
+		Programs: make(map[string]reconcile.ProgramState),
+		Maps:     make(map[string]reconcile.MapState),
+	}
+	for index, name := range schema.Programs {
+		actual.Programs[name] = reconcile.ProgramState{ID: uint32(index + 1), Name: name}
+	}
+	for _, expected := range schema.Maps {
+		actual.Maps[expected.Name] = reconcile.MapState{
+			ID: 1, Name: expected.Name, KeySize: expected.KeySize, ValueSize: expected.ValueSize, MaxEntries: expected.MaxEntries,
+		}
+	}
+	return actual, nil
+}
+
+type dynamicRuntimeScanTC struct{}
+
+func (dynamicRuntimeScanTC) Scan(context.Context, []resolver.LinkIdentity) (reconcile.ActualState, error) {
+	actual := reconcile.ActualState{}
+	programs := []struct {
+		name string
+		id   uint32
+	}{
+		{name: "tc_init_e", id: 1},
+		{name: "tc_restore", id: 4},
+	}
+	for _, program := range programs {
+		spec, err := datapath.NewFixedFilter(resolver.LinkIdentity{IfIndex: 2, IfName: "eth0", MAC: []byte{1, 2, 3, 4, 5, 6}}, program.name, program.id, true)
+		if err != nil {
+			return reconcile.ActualState{}, err
+		}
+		actual.Attachments = append(actual.Attachments, reconcile.AttachmentState{
+			Link: spec.Link, Hook: string(spec.Hook), Program: spec.Program, Priority: spec.Priority, Handle: spec.Handle, ProgramID: spec.ProgramID,
+		})
+	}
+	return actual, nil
 }
 
 func dynamicRuntimePublisher(t *testing.T) *controlplane.Publisher {
@@ -55,18 +127,22 @@ func dynamicTestConfig() config.AgentConfiguration {
 	}
 }
 
-func TestDynamicRuntimeStartsKubernetesControlChain(t *testing.T) {
-	sources := controlplane.Sources{Preflight: dynamicObserverPreflight{}, Flannel: dynamicObserverFlannel{}, Endpoints: dynamicObserverEndpoints{}, Pins: dynamicObserverPins{}, TC: dynamicObserverTC{}, Rules: dynamicObserverRules{}}
+func TestDynamicRuntimeRunsInitialFullReconcileOnEmptyNode(t *testing.T) {
+	sources := controlplane.Sources{Preflight: dynamicObserverPreflight{}, Flannel: dynamicObserverFlannel{}, Endpoints: dynamicRuntimeEndpoints{}, Pins: dynamicRuntimePins{}, TC: dynamicRuntimeScanTC{}, Rules: dynamicObserverRules{}}
 	events := []string{}
+	ensurers := &dynamicRuntimeEnsurers{}
 	factory := func(context.Context, datapathComponentConfig) (*datapathComponents, error) {
 		return &datapathComponents{
 			cri: &fakeCloser{}, endpointResolver: &localHandlerResolver{endpoint: handlerEndpoint("unused"), events: &events}, sources: sources,
 			tc: dynamicRuntimeTC{}, mapWriter: dynamicRuntimeMaps{}, ownership: &deleteOwnership{state: reconcile.OwnershipState{SchemaVersion: 1, InstallationID: "install", NodeUID: "node-a"}},
-			control: &localHandlerControl{events: &events}, endpoint: &localHandlerEndpoint{events: &events}, maps: &localHandlerMaps{events: &events}, publisher: dynamicRuntimePublisher(t),
+			control: &localHandlerControl{events: &events}, collection: ensurers, marker: ensurers, base: ensurers,
+			endpoint: &localHandlerEndpoint{events: &events}, maps: &localHandlerMaps{events: &events}, publisher: dynamicRuntimePublisher(t),
 		}, nil
 	}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: types.UID("node-a")}}
-	runtime, err := newDynamicRuntimeWithFactory(dynamicTestConfig(), fake.NewSimpleClientset(node), factory)
+	cfg := dynamicTestConfig()
+	cfg.Kube.ResyncInterval = config.Duration(time.Hour)
+	runtime, err := newDynamicRuntimeWithFactory(cfg, fake.NewSimpleClientset(node), factory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,11 +150,11 @@ func TestDynamicRuntimeStartsKubernetesControlChain(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- runtime.Run(ctx) }()
 	deadline := time.Now().Add(time.Second)
-	for runtime.State() != KubeBootstrapReady && time.Now().Before(deadline) {
+	for (atomic.LoadInt32(&ensurers.collection) == 0 || atomic.LoadInt32(&ensurers.marker) == 0 || atomic.LoadInt32(&ensurers.base) == 0) && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if runtime.State() != KubeBootstrapReady {
-		t.Fatalf("dynamic runtime state = %s", runtime.State())
+	if runtime.State() != KubeBootstrapReady || atomic.LoadInt32(&ensurers.collection) != 1 || atomic.LoadInt32(&ensurers.marker) != 1 || atomic.LoadInt32(&ensurers.base) != 1 {
+		t.Fatalf("initial dynamic reconcile did not ensure base datapath: state=%s collection=%d marker=%d base=%d", runtime.State(), atomic.LoadInt32(&ensurers.collection), atomic.LoadInt32(&ensurers.marker), atomic.LoadInt32(&ensurers.base))
 	}
 	cancel()
 	select {

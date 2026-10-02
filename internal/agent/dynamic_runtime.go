@@ -19,20 +19,33 @@ import (
 )
 
 type DynamicRuntime struct {
-	config     config.AgentConfiguration
-	store      *kube.SnapshotStore
-	source     *kube.InformerSource
-	bootstrap  *KubeBootstrap
-	resync     *kube.ResyncScheduler
-	queue      *queue.Queue
-	barrier    *reconcile.CoordinationBarrier
-	factory    datapathComponentFactory
-	components *datapathComponents
-	observer   *DynamicObserver
-	worker     *queue.Worker
+	config      config.AgentConfiguration
+	store       *kube.SnapshotStore
+	source      *kube.InformerSource
+	bootstrap   *KubeBootstrap
+	resync      *kube.ResyncScheduler
+	queue       *queue.Queue
+	barrier     *reconcile.CoordinationBarrier
+	factory     datapathComponentFactory
+	components  *datapathComponents
+	observer    *DynamicObserver
+	coordinator *reconcile.Coordinator
+	worker      *queue.Worker
 }
 
 type datapathComponentFactory func(context.Context, datapathComponentConfig) (*datapathComponents, error)
+
+type dynamicObservationBackend struct {
+	observer *DynamicObserver
+}
+
+func (b dynamicObservationBackend) Discover(ctx context.Context) (reconcile.DesiredState, error) {
+	return b.observer.Desired(ctx)
+}
+
+func (b dynamicObservationBackend) Scan(ctx context.Context) (reconcile.ActualState, error) {
+	return b.observer.Scan(ctx)
+}
 
 func NewDynamicRuntime(configPath string) (*DynamicRuntime, error) {
 	cfg, err := config.Load(configPath)
@@ -96,6 +109,10 @@ func (r *DynamicRuntime) Run(ctx context.Context) error {
 	if err := r.initializeDatapath(ctx); err != nil {
 		return err
 	}
+	if _, err := r.coordinator.FullReconcile(ctx); err != nil {
+		_ = r.components.Close()
+		return fmt.Errorf("initial dynamic full reconcile: %w", err)
+	}
 	go r.resync.Run(ctx)
 	workerDone := make(chan struct{})
 	go func() {
@@ -150,6 +167,20 @@ func (r *DynamicRuntime) initializeDatapath(ctx context.Context) error {
 		_ = components.Close()
 		return err
 	}
+	backend, err := controlplane.NewFirstPassBackend(controlplane.FirstPassBackendConfig{
+		Observer: dynamicObservationBackend{observer: observer}, Control: components.control, Collection: components.collection, Marker: components.marker,
+		Base: components.base, Endpoint: components.endpoint, Maps: components.maps, Ownership: components.ownership,
+		Remover: remover, Publisher: components.publisher,
+	})
+	if err != nil {
+		_ = components.Close()
+		return err
+	}
+	coordinator, err := reconcile.NewCoordinator(backend)
+	if err != nil {
+		_ = components.Close()
+		return err
+	}
 	guard, err := NewEndpointReuseGuard(components.endpointResolver, r.config.NodeName)
 	if err != nil {
 		_ = components.Close()
@@ -180,6 +211,6 @@ func (r *DynamicRuntime) initializeDatapath(ctx context.Context) error {
 		_ = components.Close()
 		return err
 	}
-	r.components, r.observer, r.worker = components, observer, worker
+	r.components, r.observer, r.coordinator, r.worker = components, observer, coordinator, worker
 	return nil
 }
